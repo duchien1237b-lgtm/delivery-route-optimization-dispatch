@@ -17,7 +17,8 @@ BFResult bellmanFord(const Graph& g, int nguon) {
     for (int vong = 1; vong <= soDinh - 1; vong++) {
         bool coThayDoi = false;
         for (int u = 0; u < soDinh; u++) {
-            if (kq.khoangCach[u] == VO_CUC) continue;
+            if (kq.khoangCach[u] == VO_CUC) 
+				continue;
             for (const Edge& canh : g.neighbors(u)) {
                 double khoangCachMoi = kq.khoangCach[u] + canh.weight;
                 if (khoangCachMoi < kq.khoangCach[canh.to]) {
@@ -71,7 +72,6 @@ vector<int> findNegativeCycle(const Graph& g) {
     }
     if (x == -1) 
 	return {}; 
- 
     for (int i = 0; i < soDinh; i++) 
 	x = truoc[x]; 
     vector<int> chuTrinh;
