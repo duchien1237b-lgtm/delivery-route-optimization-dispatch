@@ -1,0 +1,56 @@
+== 401: chưa đăng nhập
+GET /api/orders/list (không cookie)                           -> HTTP 401
+    {"ok":false,"error":"Bạn cần đăng nhập để dùng chức năng này","auth":true}
+POST /api/order/add (không cookie)                            -> HTTP 401
+    {"ok":false,"error":"Bạn cần đăng nhập để dùng chức năng này","auth":true}
+== 403: đăng nhập rồi nhưng không có quyền
+Khách xem danh sách tài khoản GET /api/users              -> HTTP 403
+    {"ok":false,"error":"Tài khoản Khách hàng không có quyền dùng chức năng này"}
+Shipper đổi biểu phí POST /api/config/update             -> HTTP 403
+    {"ok":false,"error":"Tài khoản Shipper không có quyền dùng chức năng này"}
+Shipper xem nhật ký kiểm toán GET /api/audit             -> HTTP 403
+    {"ok":false,"error":"Tài khoản Shipper không có quyền dùng chức năng này"}
+Khách tự nhận lời mời của shipper POST /api/trip/accept -> HTTP 403
+    {"ok":false,"error":"Tài khoản Khách hàng không có quyền dùng chức năng này"}
+IDOR: khachvip mở đơn #105 của anphat                    -> HTTP 403
+    {"ok":false,"error":"Đơn 105 không thuộc quyền xem của bạn"}
+Thiếu X-CSRF-Token khi POST /api/profile/update              -> HTTP 403
+    {"ok":false,"error":"Thiếu hoặc sai mã CSRF, hãy tải lại trang"}
+Origin lạ (CSRF từ trang khác)                            -> HTTP 403
+    {"ok":false,"error":"Yêu cầu bị từ chối vì không đến từ chính trang web này"}
+Tự đăng ký vai trò admin                                 -> HTTP 403
+    {"ok":false,"error":"Không thể tự đăng ký tài khoản quản trị viên"}
+Tự đăng ký vai trò điều phối viên (vai trò đã bỏ) -> HTTP 400
+    {"ok":false,"error":"Vui lòng chọn loại tài khoản","fields":{"role":"Chọn khách hàng hoặc shipper"}}
+== 409: ghép đơn kiểu Grab, máy trạng thái từ chối thao tác không hợp lệ
+    (khách anphat vừa tạo đơn #109: hệ thống tự mời shipper gần kho nhất, không cần ai xác nhận)
+    (người được mời: Anh Tuấn -> tài khoản tuan; binh là người không được mời)
+Giao đơn #109 khi chưa có ai nhận (Đã mời -> Đã giao) -> HTTP 409
+    {"ok":false,"error":"Không thể xác nhận giao khi đơn đang ở trạng thái 'Đã phân công'"}
+Shipper binh không được mời mà nhận chuyến #1      -> HTTP 403
+    {"ok":false,"error":"Chuyến này không phải của bạn"}
+Shipper tuan nhận lời mời (chuyến #1)                  -> HTTP 200
+    {"me":{"username":"tuan","role":"shipper","roleName":"Shipper","displayName":"Anh Tuấn","link":"Anh Tuấn","status":"active","statusName":"Hoạt động","statusReason":"","email":"tuan@giaohang.vn","phone":"09110000
+Nhận lại chuyến #1 lần 2                               -> HTTP 409
+    {"ok":false,"error":"Chuyến này đã được nhận rồi"}
+Khách huỷ đơn #109 đã có shipper nhận mà không ghi lý do -> HTTP 400
+    {"ok":false,"error":"Hãy chọn hoặc nhập lý do huỷ","fields":{"reason":"Hãy nhập lý do (ít nhất 3 ký tự)"}}
+Khách huỷ đơn #109 kèm lý do (phí huỷ nếu shipper đã lấy hàng) -> HTTP 200
+    {"me":{"username":"anphat","role":"customer","roleName":"Khách hàng","displayName":"Công ty An Phát","link":"","status":"active","statusName":"Hoạt động","statusReason":"","email":"anphat@example.com","phone":"0
+Huỷ lại đơn #109 đã huỷ                              -> HTTP 409
+    {"ok":false,"error":"Đơn đang ở trạng thái 'Đã huỷ' (đã kết thúc), không thể huỷ"}
+== 429: sai mật khẩu nhiều lần thì bị khoá tạm (thông báo chung, không lộ tài khoản có tồn tại)
+Đăng nhập sai lần 1 (banhhoa)                            -> HTTP 401
+    {"ok":false,"error":"Thông tin đăng nhập không đúng"}
+Đăng nhập sai lần 2 (banhhoa)                            -> HTTP 401
+    {"ok":false,"error":"Thông tin đăng nhập không đúng"}
+Đăng nhập sai lần 3 (banhhoa)                            -> HTTP 401
+    {"ok":false,"error":"Thông tin đăng nhập không đúng"}
+Đăng nhập sai lần 4 (banhhoa)                            -> HTTP 401
+    {"ok":false,"error":"Thông tin đăng nhập không đúng"}
+Đăng nhập sai lần 5 (banhhoa)                            -> HTTP 429
+    {"ok":false,"error":"Đăng nhập sai quá nhiều lần. Tài khoản tạm khoá đăng nhập 60 giây"}
+Đăng nhập sai lần 6 (banhhoa)                            -> HTTP 429
+    {"ok":false,"error":"Đăng nhập sai quá nhiều lần. Hãy thử lại sau 60 giây"}
+Đăng nhập tài khoản không tồn tại                  -> HTTP 401
+    {"ok":false,"error":"Thông tin đăng nhập không đúng"}

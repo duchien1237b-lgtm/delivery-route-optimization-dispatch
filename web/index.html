@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Điều phối giao hàng</title>
+  <meta name="description" content="Tìm đường, dự toán chi phí và điều phối đơn hàng cho shipper trên bản đồ thành phố.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='16' fill='%2300A862'/%3E%3Cpath d='M8 22 L14 12 L19 18 L24 9' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='8' cy='22' r='2.6' fill='%23FFFFFF'/%3E%3Ccircle cx='24' cy='9' r='2.6' fill='%23FFFFFF'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Bản đồ phủ toàn màn hình, mọi thứ khác nổi phía trên -->
+  <section class="stage" id="stage" aria-label="Bản đồ mạng lưới">
+    <svg id="map" role="img" aria-label="Bản đồ các điểm giao hàng và đoạn đường"></svg>
+    <div class="map-hint" id="map-hint" hidden></div>
+    <div class="legend" id="legend"></div>
+    <div class="map-ctrl">
+      <div class="ctl-group layers" role="group" aria-label="Lớp bản đồ">
+        <button class="tool" data-layer="routes" title="Lộ trình shipper đang chạy" aria-label="Lớp lộ trình shipper" aria-pressed="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8.2 18H14a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h5.8"/></svg></button>
+        <button class="tool" data-layer="restricted" title="Đường cấm một số loại xe (xe tải...)" aria-label="Lớp đường cấm tải" aria-pressed="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button>
+        <button class="tool" data-layer="zone" title="Vùng nội thành: cụm điểm kho đi tới được" aria-label="Lớp vùng nội thành" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M5 8.5 11 4l8 4.5-1.5 8L10 20 4.5 15z"/></svg></button>
+      </div>
+      <div class="ctl-group">
+        <button class="tool" id="zoom-fit" title="Vừa khung cụm chính (F)" aria-label="Vừa khung"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="7.5"/></svg></button>
+        <button class="tool" id="zoom-all" title="Xem mọi điểm (A)" aria-label="Xem mọi điểm"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span class="tool-count" id="all-count" hidden></span></button>
+        <button class="tool km" id="toggle-km" title="Hiện số km trên từng đoạn (K)" aria-pressed="false">km</button>
+      </div>
+      <div class="ctl-group">
+        <button class="tool" id="zoom-in" title="Phóng to (+)" aria-label="Phóng to"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button class="tool" id="zoom-out" title="Thu nhỏ (−)" aria-label="Thu nhỏ"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+      </div>
+    </div>
+    <div class="tooltip" id="tooltip" hidden></div>
+  </section>
+
+  <!-- Ô tìm kiếm nổi + bộ dữ liệu -->
+  <header class="topcard">
+    <div class="tc-row">
+      <a class="brand" href="#overview" title="Điều phối giao hàng – Tổng quan" aria-label="Trang tổng quan">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 22.5 14 13l5 6 4.5-8.5" class="brand-route"/><circle cx="9" cy="22.5" r="2.6" class="brand-dot"/><circle cx="23.5" cy="10.5" r="2.6" class="brand-dot"/></svg>
+      </a>
+      <div class="search" role="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
+        <input type="text" id="search-input" placeholder="Tìm đơn, shipper, địa điểm…" autocomplete="off" aria-label="Tìm toàn cục: đơn hàng, shipper, địa điểm, trang" aria-controls="search-list" aria-expanded="false">
+        <kbd aria-hidden="true" id="search-kbd">Ctrl K</kbd>
+        <ul class="search-list" id="search-list" role="listbox" hidden></ul>
+      </div>
+    </div>
+    <div class="tc-sub">
+      <label class="dataset-picker admin-only">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4.5 3.5 6.5v13l5.5-2 6 2 5.5-2v-13l-5.5 2z"/><path d="M9 4.5v13M15 6.5v13"/></svg>
+        <span class="sr-only">Bộ dữ liệu</span>
+        <select id="dataset-select" aria-label="Bộ dữ liệu"></select>
+      </label>
+      <span id="graph-summary" class="graph-summary"></span>
+    </div>
+  </header>
+
+  <!-- Đội shipper + thao tác nhanh -->
+  <div class="hud-right">
+    <a class="crew-stack" id="crew-stack" href="#dispatch" title="Đội shipper"></a>
+    <div class="hud-pill">
+      <button class="hb admin-only" id="btn-undo" title="Hoàn tác (Ctrl+Z)" aria-label="Hoàn tác" disabled><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+      <button class="hb admin-only" id="btn-redo" title="Làm lại (Ctrl+Y)" aria-label="Làm lại" disabled><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+      <div class="menu bell-menu">
+        <button class="hb" id="btn-bell" aria-haspopup="true" aria-expanded="false" title="Thông báo" aria-label="Thông báo"><svg viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/></svg><em class="hb-badge" id="bell-count" hidden></em></button>
+        <div class="menu-list notif-list" id="bell-menu" role="dialog" aria-label="Thông báo" hidden></div>
+      </div>
+      <button class="hb" id="btn-theme" title="Giao diện: tự động" aria-label="Đổi giao diện sáng tối"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/></svg></button>
+      <button class="hb admin-only" id="btn-save" title="Lưu bản đồ và đơn hàng (data/my_map.txt, data/my_orders.txt)" aria-label="Lưu"><svg viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></svg></button>
+      <div class="menu">
+        <button class="hb" id="btn-files" aria-haspopup="true" aria-expanded="false" title="Tệp và phím tắt" aria-label="Tệp"><svg viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18.5" cy="12" r="1.4"/></svg></button>
+        <div class="menu-list" id="files-menu" role="menu" hidden>
+          <div class="admin-only">
+          <button role="menuitem" data-export="map">Tải map.txt</button>
+          <button role="menuitem" data-export="orders">Tải orders.txt</button>
+          <button role="menuitem" data-export="shippers">Tải shippers.txt</button>
+          <hr>
+          <button role="menuitem" data-import="map">Nhập map.txt…</button>
+          <button role="menuitem" data-import="orders">Nhập orders.txt…</button>
+          <button role="menuitem" data-import="shippers">Nhập shippers.txt…</button>
+          <hr>
+          </div>
+          <button role="menuitem" id="btn-keys">Phím tắt <span class="muted">?</span></button>
+        </div>
+      </div>
+      <input type="file" id="file-input" accept=".txt,text/plain" hidden>
+    </div>
+    <div class="menu user-menu">
+      <button class="user-chip" id="btn-user" aria-haspopup="true" aria-expanded="false" title="Tài khoản"></button>
+      <div class="menu-list" id="user-menu" role="menu" hidden>
+        <div class="um-head" id="um-head"></div>
+        <a role="menuitem" href="#profile">Hồ sơ cá nhân</a>
+        <button role="menuitem" id="btn-password">Đổi mật khẩu</button>
+        <a role="menuitem" href="#accounts" class="staff-only">Quản lý tài khoản</a>
+        <a role="menuitem" href="#settings" class="staff-only">Biểu phí &amp; mã giảm giá</a>
+        <a role="menuitem" href="#audit" class="admin-only">Nhật ký kiểm toán</a>
+        <hr>
+        <button role="menuitem" id="btn-logout" class="danger-item">Đăng xuất</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Khung nội dung: thẻ nổi bên trái (máy tính) hoặc khung kéo lên (điện thoại) -->
+  <section class="drawer" id="sheet">
+    <div class="grabber" id="grabber" role="separator" aria-label="Kéo để mở rộng hoặc thu gọn"><i></i></div>
+    <main class="panel" id="panel" tabindex="-1"></main>
+  </section>
+
+  <!-- Thanh chuyển trang kiểu app -->
+  <nav class="dock" aria-label="Chức năng">
+    <a href="#overview" data-page="overview"><svg viewBox="0 0 24 24"><path d="M4 11.2 12 4.5l8 6.7V20h-5.2v-5.2H9.2V20H4z"/></svg><span>Tổng quan</span></a>
+    <a href="#queue" data-page="queue"><svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4V2.8h6V4M8.5 10h7M8.5 13.5h7M8.5 17h4"/></svg><span>Đơn hàng</span><em class="dock-badge" id="dock-queue" hidden></em></a>
+    <a href="#network" data-page="network"><svg viewBox="0 0 24 24"><path d="M9 4.5 3.5 6.5v13l5.5-2 6 2 5.5-2v-13l-5.5 2z"/><path d="M9 4.5v13M15 6.5v13"/></svg><span>Bản đồ</span></a>
+    <a href="#route" data-page="route"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.4"/><path d="M18 3.5a3.5 3.5 0 0 0-3.5 3.5c0 2.6 3.5 6 3.5 6s3.5-3.4 3.5-6A3.5 3.5 0 0 0 18 3.5z"/><path d="M8 17c4 0 2-6 6-6"/></svg><span>Tìm đường</span></a>
+    <a href="#explore" data-page="explore"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.2"/><circle cx="6" cy="12" r="2.2"/><circle cx="18" cy="12" r="2.2"/><circle cx="4" cy="19" r="2.2"/><circle cx="9" cy="19" r="2.2"/><path d="M11 6.8 7 10.4M13 6.8l4 3.6M5.4 14l-1 3M6.8 14l1.6 3"/></svg><span>Duyệt</span></a>
+    <a href="#analysis" data-page="analysis"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.3"/><circle cx="18" cy="6" r="2.3"/><circle cx="12" cy="18" r="2.3"/><path d="M8.3 6h7.4M7.2 8l3.6 8M16.8 8l-3.6 8"/><path d="M12 9.5v2" stroke-dasharray="1 2"/></svg><span>Phân tích</span></a>
+    <a href="#lab" data-page="lab"><svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="4"/><path d="M10 9.3v5.4l4.4-2.7z"/></svg><span>Mô phỏng</span></a>
+    <a href="#cost" data-page="cost"><svg viewBox="0 0 24 24"><path d="M6 3.5h12v17l-2.4-1.6-2.4 1.6-1.2-.8-1.2.8-2.4-1.6L6 20.5z"/><path d="M9 8h6M9 11.5h6M9 15h3.5"/></svg><span>Chi phí</span></a>
+    <a href="#dispatch" data-page="dispatch"><svg viewBox="0 0 24 24"><path d="M2.8 6.2h10.8v10.3H2.8zM13.6 9.6h4.2l3.2 3.4v3.5h-7.4z"/><circle cx="6.8" cy="17.4" r="1.9"/><circle cx="17.1" cy="17.4" r="1.9"/></svg><span>Điều phối</span><em class="dock-badge" id="dock-pending" hidden></em></a>
+    <a href="#tracking" data-page="tracking"><svg viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg><span>Theo dõi</span></a>
+    <a href="#reports" data-page="reports"><svg viewBox="0 0 24 24"><path d="M5 20V11M10 20V5M15 20v-7M20 20v-4"/></svg><span>Báo cáo</span></a>
+    <a href="#myjob" data-page="myjob"><svg viewBox="0 0 24 24"><circle cx="5.5" cy="16.5" r="2.6"/><circle cx="18.5" cy="16.5" r="2.6"/><path d="M8.1 16.5h7.4l1.8-6.2h-3.1M14.3 6h2.4l.9 4.3M8.1 16.5 6.6 12h4.6l2.2 4.5"/></svg><span>Chuyến của tôi</span><em class="dock-badge" id="dock-myjob" hidden></em></a>
+    <a href="#myorders" data-page="myorders"><svg viewBox="0 0 24 24"><path d="M4 7.5 12 3.5l8 4v9l-8 4-8-4z"/><path d="M4 7.5l8 4 8-4M12 11.5v9"/></svg><span>Đơn của tôi</span></a>
+    <a href="#cod" data-page="cod"><svg viewBox="0 0 24 24"><rect x="3" y="6.5" width="18" height="12" rx="2.5"/><circle cx="12" cy="12.5" r="2.6"/><path d="M6.5 9.5v6M17.5 9.5v6"/></svg><span>Sổ COD</span><em class="dock-badge" id="dock-cod" hidden></em></a>
+    <a href="#wallet" data-page="wallet"><svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M15 13.5h2.5"/></svg><span>Ví</span></a>
+    <a href="#complaints" data-page="complaints"><svg viewBox="0 0 24 24"><path d="M4 5.5h16v11H9.5L5 20v-3.5H4z"/><path d="M12 8.5v3.5M12 14.2v.3"/></svg><span>Khiếu nại</span><em class="dock-badge" id="dock-complaints" hidden></em></a>
+    <a href="#summary" data-page="summary"><svg viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5H12z"/><path d="M15 3.8A8.5 8.5 0 0 1 20.2 9H15z"/></svg><span>Thống kê</span></a>
+    <a href="#bench" data-page="bench"><svg viewBox="0 0 24 24"><path d="M4.5 16a8 8 0 1 1 15 0"/><path d="m12 13 3.5-4.5"/><circle cx="12" cy="13.5" r="1.4"/></svg><span>Hiệu năng</span></a>
+    <a href="#accounts" data-page="accounts"><svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.8 19.5a6.2 6.2 0 0 1 12.4 0"/><circle cx="17.5" cy="9" r="2.6"/><path d="M15.8 14.2a5 5 0 0 1 5.7 5.3"/></svg><span>Tài khoản</span><em class="dock-badge" id="dock-accounts" hidden></em></a>
+    <a href="#profile" data-page="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/></svg><span>Hồ sơ</span></a>
+  </nav>
+
+  <!-- Trang khách vãng lai: báo giá thử, tra cứu đơn, đăng nhập / đăng ký / quên mật khẩu (auth.js vẽ nội dung) -->
+  <div class="login-screen" id="login" hidden></div>
+
+  <div class="toast-region" id="toasts" aria-live="polite"></div>
+  <div id="print-area" aria-hidden="true"></div>
+
+  <dialog id="modal">
+    <div class="modal-box">
+      <h2 id="modal-title"></h2>
+      <div id="modal-body"></div>
+      <form method="dialog" class="modal-actions"><button class="btn">Đóng</button></form>
+    </div>
+  </dialog>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
