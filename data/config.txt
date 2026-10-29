@@ -1,0 +1,24 @@
+# Cau hinh he thong: moi dong 'khoa gia_tri'. Sua bang trang Cau hinh (quan tri vien).
+tariff.firstKm 2
+tariff.firstFee 15000
+tariff.perKm 4000
+tariff.freeKg 3
+tariff.perKg 2500
+tariff.urgent 0.3
+tariff.codRate 0.008
+tariff.codMin 5000
+tariff.returnRate 0.5
+tier Đồng 0 0
+tier Bạc 5 0.03
+tier Vàng 15 0.05
+tier Kim%20cương 30 0.08
+cancel.dispatched 0.2
+cancel.onRoute 0.5
+shipperShare 0.7
+scoreAware 0
+maxOpenOrders 20
+autoDeliver 0
+match.auto 1
+match.offerSeconds 45
+match.giveUp 10
+clock.speed 6

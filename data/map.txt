@@ -1,0 +1,42 @@
+# Ban do noi thanh TP.HCM (vo huong) - 14 nut, 17 canh. Can Gio (12, 13) tach roi dat lien.
+# Dinh dang: xem src/FileIO.h
+DIRECTED 0
+
+NODES 14
+# id  vi_do  kinh_do  ten
+0 10.8040 106.7120 Kho Bình Thạnh
+1 10.7725 106.6980 Chợ Bến Thành
+2 10.7798 106.6990 Nhà thờ Đức Bà
+3 10.7875 106.7050 Thảo Cầm Viên
+4 10.7950 106.7218 Landmark 81
+5 10.7823 106.6773 Ga Sài Gòn
+6 10.8010 106.6640 Công viên Hoàng Văn Thụ
+7 10.7520 106.6600 Chợ Lớn
+8 10.7680 106.6380 Đầm Sen
+9 10.8185 106.6588 Sân bay Tân Sơn Nhất
+10 10.8410 106.8090 Khu Công nghệ cao
+11 10.8150 106.7110 Bến xe Miền Đông
+12 10.4110 106.9560 Cần Giờ - Chợ Cần Thạnh
+13 10.4900 106.8900 Cần Giờ - Rừng Sác
+
+EDGES 17
+# u  v  km  phut  phu_phi(nghin d)  [loai_xe: 1 xe may + 2 o to + 4 xe tai  [he_so_cao_diem]]
+# He so cao diem: luc dong nhat (7:00-8:30, 17:00-18:30) o to mat gap bao nhieu lan thoi gian.
+# Duong trung tam ~2-2.5, duong vanh dai ~1.4-1.6, cao toc 1.2, Can Gio 1.
+0 2 4.1 6.1 0 7 2.2         # Dinh Tien Hoang - Le Duan: rat dong gio cao diem
+0 3 2.7 4.1 0 7 2.0
+0 4 2.0 2.4 0 7 1.8
+0 11 1.7 2.0 0 7 1.4
+2 3 1.5 3.0 0 7 2.0
+2 1 1.1 2.2 0 3 2.5         # noi do: cam xe tai
+2 5 3.2 4.8 0 7 2.0
+4 10 14.6 14.6 0 7 1.6
+11 9 7.7 9.2 0 7 1.5
+1 7 6.4 9.6 0 7 2.0
+7 8 4.0 6.0 0 7 1.6
+9 6 2.7 4.1 0 7 1.6
+6 8 6.3 9.4 0 7 1.5
+1 5 3.4 6.8 0 3 2.2         # cam xe tai
+11 10 15.0 11.2 10 6 1.2    # cao toc: cam xe may, thu phi 10k
+3 4 2.7 4.1 5 7 1.8         # cau Thi Nghe: phi 5k
+12 13 15.3 18.4 0 7 1.0     # Can Gio: khong ket xe

@@ -1,0 +1,22 @@
+# Du lieu loi: 3 tuyen khuyen mai chong nhau tao CHU TRINH AM 2 -> 3 -> 4 -> 2. Bellman-Ford phai phat hien.
+# Dinh dang: xem src/FileIO.h
+DIRECTED 1
+
+NODES 6
+# id  vi_do  kinh_do  ten
+0 10.8040 106.7120 Kho Bình Thạnh
+1 10.7798 106.6990 Nhà thờ Đức Bà
+2 10.7725 106.6980 Chợ Bến Thành
+3 10.7620 106.6820 Hub đối tác Quận 5
+4 10.7520 106.6600 Chợ Lớn
+5 10.7290 106.7210 Phú Mỹ Hưng
+
+EDGES 7
+# u  v  km  phut  phu_phi(nghin d)  [loai_xe: 1 xe may + 2 o to + 4 xe tai]
+0 1 4.1 6.1 0
+1 2 1.1 2.2 0
+2 3 2.8 4.2 -20             # khuyen mai A
+3 4 3.6 5.4 -25             # khuyen mai B
+4 2 6.4 9.6 -40             # khuyen mai C -> vong 2-3-4-2 co tong chi phi am
+3 5 7.6 9.1 0
+1 5 8.3 10.0 15

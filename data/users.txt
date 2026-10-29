@@ -1,0 +1,12 @@
+# Tai khoan dang nhap (mat khau chi luu ban bam SHA-256 co muoi, 10000 vong)
+# ten_dang_nhap  vai_tro(admin/shipper/customer)  salt  bam  lien_ket(ten shipper, '-' neu khong)  [khoa=gia_tri ...]  ten_hien_thi
+# khoa tuy chon: status ly_do email sdt tao(giay) dn(giay) xe tai bien sansang vitri done chi
+admin admin 5d030c1880fa807f 57120db6befec8e7b21ce3bc44ef504c90c6956e94144a1398bd4c03047e5f7b - email=admin@giaohang.vn sdt=0900000001 Quản_trị_viên
+tuan shipper 9d6993851258230c f4218714e411ba7b51eee6928a1945955cd378e8130acc1eab43e18053f20297 Anh_Tuấn email=tuan@giaohang.vn sdt=0911000001 xe=0 tai=20 bien=59A1-111.11 vitri=11 Anh_Tuấn
+binh shipper 8437dde3c9e1c49a 973f92d9ff44dd06b3abd2972a1ddacd28419f39415066f1fce2a658a28f31e6 Chị_Bình email=binh@giaohang.vn sdt=0911000002 xe=0 tai=15 bien=59A1-222.22 vitri=1 Chị_Bình
+cuong shipper 258b1aa0fe63e7fe ebadff8388e3ab8bcf2e6f0d9341f82c4dfea322d4987025805b68318235f75a Anh_Cường email=cuong@giaohang.vn sdt=0911000003 xe=2 tai=60 bien=51C-333.33 vitri=7 Anh_Cường
+anphat customer 0e9d2c04301d91fa 0b7d28017196d683617a000dde955588b66eee63c5239ecbbdffd7b5e72a922d - email=anphat@example.com sdt=0901000001 done=6 chi=720000 Công_ty_An_Phát
+banhhoa customer 082bbbf06bb7bf7c dfc9ee08e02f1be2c13e97fa75028c63e23b80afda3dcd371a23a18cd3a36fa4 - email=banhhoa@example.com sdt=0901000002 Tiệm_bánh_Hoa
+ctv_hung shipper b2d82fc617a11629 055d4c30558649371e3e824b861abf6649b25eb044a0c031aac88fe18518a055 - status=pending email=hung@example.com sdt=0913000001 tao=1792948351 xe=0 tai=18 bien=59B2-222.22 Anh_Hùng
+khachvip customer 939858c8dbb561d7 93c3591f0ba77af5ba717cc4575109caedd022b29ddde63849a2d2315caeb3fc - email=vip@example.com sdt=0902000001 tao=1775841151 done=32 chi=5048000 Nhà_hàng_Hương_Việt
+cuahangmai customer f9615f7e1575ced2 c978446f7b5a6a4065416c6f95b756b5c965907520c0f2c9fe8cd2bea9427dd1 - email=maianh@example.com sdt=0903000001 tao=1789262880 done=2 chi=190000 Cửa_hàng_Mai_Anh

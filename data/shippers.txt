@@ -1,0 +1,5 @@
+# Danh sach shipper
+# tai_trong(kg)  loai_xe(0 xe may, 1 o to, 2 xe tai)  ten
+20 0 Anh Tuấn
+15 0 Chị Bình
+60 2 Anh Cường

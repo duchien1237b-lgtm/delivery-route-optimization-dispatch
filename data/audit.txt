@@ -1,0 +1,4 @@
+# Nhat ky kiem toan: id thoi_diem(giay) nguoi_lam vai_tro hanh_dong doi_tuong chi_tiet
+1 1793113951 admin admin auth.login admin Chrome trên Windows
+2 1793114151 admin admin user.create cuahangmai customer
+3 1792948351 ctv_hung guest auth.register ctv_hung shipper hung@example.com

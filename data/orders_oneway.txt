@@ -1,0 +1,8 @@
+# Don hang cho ban do map_oneway.txt
+# id  nut_dich  kg  gap(0/1)  han(phut, -1 = khong)  ghi_chu
+201 3 1.5 1 30 Hoa tươi
+202 5 3 0 -1 Hồ sơ văn phòng
+203 8 10 0 90 Thùng vải
+204 9 4 1 50 Thiết bị y tế
+205 4 2 0 -1 Đồ ăn đặt trước
+206 6 1 0 60 Vé tàu

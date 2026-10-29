@@ -1,0 +1,4 @@
+# So dia chi: id khach_hang nut_ban_do mac_dinh(1/0) sdt nhan_goi_nho nguoi_nhan dia_chi_chi_tiet
+1 anphat 1 1 0901000001 Văn%20phòng Công%20ty%20An%20Phát Tầng 5, toà nhà Sunrise
+2 anphat 10 0 0909103103 Kho%20hàng Anh%20Khoa Kho số 2
+3 khachvip 5 1 0902000001 Nhà%20hàng Nhà%20hàng%20Hương%20Việt Mặt tiền đường chính

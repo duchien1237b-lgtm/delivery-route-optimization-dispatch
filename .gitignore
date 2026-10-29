@@ -1,0 +1,40 @@
+# Build
+build/
+cmake-build-*/
+*.o
+*.obj
+*.exe
+delivery
+test_traversal
+test_algorithms
+test_features
+test_extensions
+test_business
+test_auth
+test_commerce
+test_web
+
+# File sinh ra khi chạy test / lưu từ web
+out_map.txt
+out_orders.txt
+data/my_map.txt
+data/my_orders.txt
+data/*.tmp
+data/*.bad
+data/orders_live.txt
+
+# Công cụ build bản một file
+standalone/node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# chay thu
+.run-data/
+data/*.bak
+*.log
+.DS_Store

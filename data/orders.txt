@@ -1,0 +1,11 @@
+# Danh sach don hang cho ban do map.txt
+# id  nut_dich  kg  gap(0/1)  han(phut tinh tu dau ca, -1 = khong co)  [cod=VND] [sdt=SO] [nhan=Ten_Nguoi_Nhan] [kh=tai_khoan]  ghi_chu
+# (cod, sdt, nhan, kh la tuy chon; ten nguoi nhan dung '_' thay cho dau cach; kh = tai khoan khach hang dat don)
+101 1 2.5 1 45 sdt=0909101101 nhan=Cong_ty_An_Phat kh=anphat Tài liệu hợp đồng
+102 9 1.2 0 -1 sdt=0909102102 nhan=Chị_Lan Hành lý để quên
+103 10 8 0 120 cod=4500000 sdt=0909103103 nhan=Anh_Khoa kh=anphat Linh kiện điện tử
+104 6 3 1 60 cod=350000 sdt=0909104104 nhan=Nhà_thuốc_Minh_Châu kh=banhhoa Thuốc cho nhà thuốc
+105 7 12 0 -1 cod=1200000 sdt=0909105105 nhan=Xưởng_may_Hoà_Bình kh=anphat Vải may mặc
+106 5 4.5 0 90 cod=280000 sdt=0909106106 nhan=Cô_Mai kh=banhhoa Sách giáo khoa
+107 12 6 0 -1 cod=650000 sdt=0909107107 nhan=Anh_Tư Hải sản khô (Cần Giờ chưa có tuyến)
+108 8 2 1 75 cod=420000 sdt=0909108108 nhan=Bé_Na kh=banhhoa Bánh sinh nhật

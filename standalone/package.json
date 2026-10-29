@@ -1,0 +1,6 @@
+{
+  "name": "dt08-standalone-build",
+  "private": true,
+  "description": "Công cụ dựng bản một file HTML (chỉ dùng khi phát triển, không cần để chạy)",
+  "devDependencies": { "esbuild": "^0.25.0" }
+}

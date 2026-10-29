@@ -1,0 +1,3 @@
+# Khieu nai: 'C id khach ma_don trang_thai tao cap_nhat nguoi_xu_ly tieu_de' va 'M id thoi_diem tac_gia vai_tro noi_dung'
+C 1 anphat 103 new 1793117551 1793117551 - Hàng giao chậm hơn dự kiến
+M 1 1793117551 anphat customer Đơn linh kiện điện tử giao trễ gần một giờ so với hạn đã hẹn, nhờ bên mình kiểm tra lại giúp.

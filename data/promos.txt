@@ -1,0 +1,5 @@
+# Ma giam gia: ma loai(pct|amt) gia_tri tran_giam don_toi_thieu tong_luot da_dung luot_moi_khach het_han(giay,0=khong) bat(1/0) mo_ta
+GIAM10 pct 10 20000 30000 200 0 2 1827681151 1 Giảm 10% cước, tối đa 20.000đ, cho đơn từ 30.000đ
+FREESHIP20 amt 20000 0 50000 50 0 1 1803489151 1 Giảm 20.000đ cho đơn từ 50.000đ
+CHAOBAN pct 15 30000 0 100 0 1 1790529151 1 Mã chào bạn mới (đã hết hạn — dùng để thử báo lỗi)
+HETLUOT amt 10000 0 0 1 1 1 1803489151 1 Mã đã hết lượt dùng (dùng để thử báo lỗi)

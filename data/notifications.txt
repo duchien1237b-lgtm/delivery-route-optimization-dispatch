@@ -1,0 +1,4 @@
+# Thong bao: id nguoi_nhan thoi_diem(giay) da_doc(1/0) loai ma_don noi_dung
+1 anphat 1793034751 0 account 0 Chào mừng bạn trở lại! Bạn đang ở hạng Bạc, đã giảm 3% cước vận chuyển.
+2 khachvip 1793034751 0 account 0 Bạn đang ở hạng Kim cương, giảm 8% cước vận chuyển cho mọi đơn.
+4 admin 1793117551 0 account 0 Có 1 hồ sơ shipper đang chờ duyệt (ctv_hung).
