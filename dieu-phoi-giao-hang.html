@@ -1,14 +1,4 @@
 <!doctype html>
-<!--
-  Hệ thống Tìm đường & Điều phối Giao hàng — Đề tài 08 (Cấu trúc dữ liệu & Giải thuật)
-  Bản MỘT FILE: mở thẳng file này bằng trình duyệt, không cần cài đặt, không cần server.
-  Toàn bộ thuật toán (Dijkstra 3 phiên bản, A*, Dijkstra theo giờ cao điểm, Bellman-Ford, Yen,
-  BFS/DFS, Kosaraju, Tarjan (cầu, khớp), Kruskal + DSU, Prim, Floyd–Warshall, TSP Held-Karp,
-  Nearest Neighbor, 2-opt, Cheapest Insertion, tìm kiếm cục bộ theo hạn giao, mô phỏng từng bước,
-  Trie, Min-Heap, Undo/Redo 2 ngăn xếp...) cùng toàn bộ nghiệp vụ tài khoản, vai trò và đơn hàng
-  được viết lại bằng JavaScript từ bản C++ và cho cùng kết quả. Dữ liệu người dùng lưu bằng localStorage.
-  Tệp này được SINH TỰ ĐỘNG bởi tools/build_standalone.mjs — đừng sửa tay.
--->
 <html lang="vi">
 <head>
   <meta charset="utf-8">
@@ -20,19 +10,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-/* ==========================================================================
-   Điều phối giao hàng — giao diện kiểu app giao hàng / app bản đồ
-   Bản đồ phủ toàn màn hình; ô tìm kiếm, thẻ nội dung, thanh chuyển trang và
-   nút bản đồ đều là thẻ nổi bo tròn. Xanh lá là màu thương hiệu (nút, mục
-   đang chọn); xanh dương dành cho tuyến đường; vàng cho đơn gấp; đỏ cho lỗi,
-   trễ hạn và điểm đến. Điện thoại: khung nội dung kéo lên từ dưới.
-   ========================================================================== */
 :root {
-  --brand: #00a862;         /* xanh lá thương hiệu */
+  --brand: #00a862;         
   --brand-deep: #00824c;
   --brand-soft: #e1f5eb;
   --brand-ink: #ffffff;
-  --road: #1a6fe0;          /* xanh dương: tuyến đường */
+  --road: #1a6fe0;       
   --road-ink: #ffffff;
   --road-soft: #e8f0fd;
   --bg: #ffffff;
@@ -45,16 +28,15 @@
   --muted: #6b7680;
   --line: #e3e7ea;
   --line-2: #eef1f3;
-  --signal: #f5a400;        /* vàng: đơn gấp */
+  --signal: #f5a400;     
   --signal-soft: #fff2d4;
   --signal-ink: #694500;
-  --stop: #e3372b;          /* đỏ: lỗi, trễ, điểm đến */
+  --stop: #e3372b;         
   --stop-soft: #fdeceb;
   --go: #00a862;
   --go-soft: #e1f5eb;
   --jam: #ef7300;
   --violet: #6a5be0; --violet-soft: #eeecfd;
-  /* Bản đồ (tông app bản đồ: nền xám nhạt, đường trắng viền xám, đường hạn chế vàng như cao tốc) */
   --map-bg: #eceff0;
   --map-road: #ffffff;
   --map-edge: #cbd2d7;
@@ -65,7 +47,6 @@
   --map-node-stroke: #69747e;
   --map-label-halo: #ffffff;
   --s1: #1a6fe0; --s2: #ef7300; --s3: #009e8f;
-  /* Bóng, bo góc, chuyển động */
   --shadow-1: 0 1px 2px rgba(20, 26, 31, .06), 0 0 0 1px rgba(20, 26, 31, .04);
   --shadow-card: 0 1px 2px rgba(20, 26, 31, .05), 0 6px 20px -8px rgba(20, 26, 31, .16);
   --shadow-float: 0 1px 3px rgba(20, 26, 31, .08), 0 10px 30px -8px rgba(20, 26, 31, .26);
