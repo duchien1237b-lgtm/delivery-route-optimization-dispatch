@@ -20,7 +20,7 @@ double nowMicros() {
     return static_cast<double>(duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count()) / 1000.0;
 }
 
-// Đồ thị vô hướng gọn (chỉ số 0..n-1), mỗi cặp điểm một cạnh (km nhỏ nhất của hai chiều)
+// Đồ thị vô hướng gọn(chỉ số 0..n-1), mỗi cặp điểm một cạnh (km nhỏ nhất của hai chiều)
 struct Undirected {
     std::vector<int> ids;                       // chỉ số -> id nút
     std::map<int, int> index;                   // id nút -> chỉ số
