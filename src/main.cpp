@@ -1,12 +1,4 @@
-// ============================================================================
-// main.cpp — Chương trình chính (Phần "Core + Tích hợp")
-//
-//   delivery                 -> chạy web server tại http://localhost:8080
-//   delivery --port 9000     -> đổi cổng
-//   delivery --host 0.0.0.0  -> cho máy khác trong mạng LAN truy cập
-//   delivery --console       -> menu dòng lệnh (không cần trình duyệt)
-//   delivery --data DIR --web DIR  -> chỉ định thư mục dữ liệu / giao diện
-// ============================================================================
+
 #include "BellmanFord.h"
 #include "Dispatcher.h"
 #include "Estimator.h"
@@ -35,8 +27,6 @@
 using namespace std;
 
 namespace {
-
-// ------------------------------- Tiện ích nhập -----------------------------
 int readInt(const string& prompt) {
     while (true) {
         cout << prompt;
