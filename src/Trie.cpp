@@ -4,10 +4,7 @@
 #include <set>
 #include <sstream>
 #include <unordered_map>
-
 namespace {
-
-// Giải mã UTF-8 thành dãy mã Unicode
 std::vector<char32_t> decodeUtf8(const std::string& s) {
     std::vector<char32_t> out;
     for (size_t i = 0; i < s.size();) {
@@ -26,8 +23,6 @@ std::vector<char32_t> decodeUtf8(const std::string& s) {
     }
     return out;
 }
-
-// Bảng chữ có dấu -> chữ không dấu
 const std::unordered_map<char32_t, char>& accentTable() {
     static std::unordered_map<char32_t, char> table;
     if (table.empty()) {
