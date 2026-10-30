@@ -683,7 +683,7 @@ sequenceDiagram
 
 ## Vòng đời đơn hàng
 
-Bảng chuyển trạng thái nằm trong `src/OrderFlow.cpp`; sơ đồ dưới đây sinh từ chính bảng đó (`Flow::transitionsMermaid()`). Mọi chuyển trạng thái không có trong bảng (hoặc vai trò không được phép) bị từ chối bằng **HTTP 409** kèm lý do. KH = khách hàng, SP = shipper, QT = quản trị viên, HT = hệ thống (ghép đơn tự động, hết hạn lời mời, tự huỷ).
+Bảng chuyển trạng thái nằm trong `src/OrderFlow.cpp`; sơ đồ dưới đây bắt nguồn từ bảng (`Flow::transitionsMermaid()`). Mọi chuyển trạng thái không có trong bảng (hoặc vai trò không được phép) bị từ chối bằng **HTTP 409** kèm lý do. KH = khách hàng, SP = shipper, QT = quản trị viên, HT = hệ thống (ghép đơn tự động, hết hạn lời mời, tự huỷ).
 
 ```mermaid
 stateDiagram-v2
