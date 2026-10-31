@@ -20,6 +20,7 @@ double Dispatcher::routeDistance(const std::vector<int>& stops) const {
     return d + dist(orders_[stops.back()].loc, depot_);
 }
 
+
 // 2-opt: đảo ngược một đoạn của lộ trình nếu làm quãng đường ngắn hơn
 void Dispatcher::twoOpt(std::vector<int>& stops) const {
     const int n = static_cast<int>(stops.size());
@@ -43,6 +44,7 @@ void Dispatcher::twoOpt(std::vector<int>& stops) const {
         }
     }
 }
+
 
 DispatchResult Dispatcher::run() {
     const int K = static_cast<int>(shippers_.size());
