@@ -95,7 +95,12 @@ public:
     // Nút cuối cùng chuyến đã đi qua tại giờ ca hiện tại (đoạn tới kho rồi lộ trình giao)
     int nodeReached(const Trip& t) const;
     const Trip* tripOfOrder(int orderId) const;
-    // Giao xong một đơn Đang giao tại phút `at` (shipper xác nhận bằng mã). false nếu đơn không ở trạng thái Đang giao.
+    // Shipper bấm "Đã giao tới" tại phút `at`: Đang giao -> Chờ xác nhận (người nhận phải xác nhận "Đã nhận hàng" thì đơn mới hoàn tất).
+    bool arrive(int orderId, std::vector<Order>& orders, double at);
+    // Người nhận báo chưa nhận được hàng: Chờ xác nhận -> Đang giao (shipper phải giao lại / liên hệ)
+    bool reopenDelivery(int orderId, std::vector<Order>& orders);
+    // Hoàn tất một đơn Đang giao / Chờ xác nhận (người nhận xác nhận, tự hoàn tất hoặc quản trị viên xác nhận thay).
+    // Đơn đã "giao tới" giữ giờ giao là lúc shipper tới nơi. false nếu đơn không ở hai trạng thái đó.
     bool deliver(int orderId, std::vector<Order>& orders, double at);
     // Chỉ chạy đồng hồ ca tới phút t, KHÔNG tự động giao (shipper phải xác nhận từng đơn)
     void advance(double t) { clock_ = std::max(clock_, t); }

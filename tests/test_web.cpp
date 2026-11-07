@@ -154,6 +154,15 @@ static string orderStatus(const Who& w, int id) {
     return r.status == 200 ? to_string(jnum(r.body, "status", p)) : "?";
 }
 
+// Giao hai bước (v15): shipper bấm "Đã giao tới" (kèm tiền thu hộ nếu có), người nhận bấm "Đã nhận hàng"
+static bool arrive(const Who& ship, int id, const string& cash = "") {
+    Params p = {{"id", to_string(id)}};
+    if (!cash.empty()) p.push_back({"cash", cash});
+    return POST("/api/order/arrive", p, &ship).status == 200;
+}
+static bool receive(const Who& cust, int id) { return POST("/api/order/receive", {{"id", to_string(id)}}, &cust).status == 200; }
+static bool deliverBoth(const Who& ship, const Who& cust, int id, const string& cash = "") { return arrive(ship, id, cash) && receive(cust, id); }
+
 // Bản sao dữ liệu cho kiểm thử: thêm một quản trị viên thứ hai (vai trò "nhân viên vận hành" trong các kịch bản cũ), tắt ghép đơn tự động
 // và đồng hồ ca chạy theo giờ thật để các kịch bản phân công tay chạy xác định. Các kiểm thử ghép tự động bật lại bằng /api/config/update.
 static void prepareData(const string& dir) {
@@ -351,6 +360,10 @@ static void testSecurityHeaders() {
     CHECK(r.headers.count("X-Content-Type-Options") && r.headers.count("X-Frame-Options") && r.headers.count("Content-Security-Policy"));
     CHECK(r.headers["Cache-Control"] == "no-store");
     CHECK(r.headers["Content-Security-Policy"].find("script-src 'self'") != string::npos);
+    // Google Maps là tuỳ chọn: CSP chỉ mở đúng các miền của Google Maps, không mở script-src cho mọi nguồn; Referer gửi tối thiểu
+    CHECK(r.headers["Content-Security-Policy"].find("https://maps.googleapis.com") != string::npos);
+    CHECK(r.headers["Content-Security-Policy"].find("script-src *") == string::npos && r.headers["Content-Security-Policy"].find("'unsafe-eval'") == string::npos);
+    CHECK(r.headers["Referrer-Policy"] == "strict-origin-when-cross-origin");
     // API không có -> 404 dạng JSON
     r = GET("/api/khong-co");
     CHECK(r.status == 404 && r.has("\"ok\":false"));
@@ -574,7 +587,7 @@ static void testOrderLifecycle() {
     CHECK(GET("/api/dispatch", {}, &f.tuan).status == 403);
     CHECK(dispatchApply(f.disp));
     CHECK(orderStatus(f.vip, f.orderA) == "7");
-    CHECK(POST("/api/order/deliver", {{"id", A}, {"code", "0000"}}, &f.tuan).status == 409);    // chưa nhận chuyến
+    CHECK(POST("/api/order/arrive", {{"id", A}}, &f.tuan).status == 409);    // chưa nhận chuyến
     CHECK(POST("/api/order/update", {{"id", A}, {"weight", "5"}}, &f.disp).status == 409);       // đã phân công thì không sửa
     CHECK(POST("/api/order/remove", {{"id", A}}, &f.admin).status == 409);
     // Shipper khác không nhận / giao được chuyến này
@@ -582,26 +595,33 @@ static void testOrderLifecycle() {
     int tripId = pendingTrip(st.body);
     CHECK(tripId > 0);
     CHECK(POST("/api/trip/accept", {{"id", to_string(tripId)}}, &f.binh).status == 403);
-    CHECK(POST("/api/order/deliver", {{"id", A}, {"code", "0000"}}, &f.binh).status == 403);
+    CHECK(POST("/api/order/arrive", {{"id", A}}, &f.binh).status == 403);                      // chuyến của shipper khác
+    CHECK(POST("/api/order/deliver", {{"id", A}, {"note", "Thử giao thay"}}, &f.tuan).status == 403);   // shipper không giao thay được
     CHECK(!GET("/api/state", {}, &f.binh).has("Anh Nam"));
     CHECK(POST("/api/trip/accept", {{"id", to_string(tripId)}}, &f.tuan).status == 200);
     CHECK(POST("/api/trip/accept", {{"id", to_string(tripId)}}, &f.tuan).status == 409);
     CHECK(orderStatus(f.vip, f.orderA) == "1");
-    // Shipper không thấy mã xác nhận; chủ đơn thấy
-    string code = jstr(GET("/api/order/get", {{"id", A}}, &f.vip).body, "code");
-    CHECK(code.size() == 4);
-    CHECK(GET("/api/order/get", {{"id", A}}, &f.tuan).status == 200 && !GET("/api/order/get", {{"id", A}}, &f.tuan).has("\"code\":\"" + code + "\""));
-    CHECK(!GET("/api/state", {}, &f.admin).has("\"code\":\"" + code + "\""));
-    // Giao hàng: sai mã → 400; thiếu tiền thu hộ → 400; đủ → 200; giao lại → 409
-    string wrongCode = code == "1234" ? "4321" : "1234";
-    CHECK(POST("/api/order/deliver", {{"id", A}, {"code", wrongCode}, {"cash", "500000"}}, &f.tuan).status == 400);
-    CHECK(POST("/api/order/deliver", {{"id", A}, {"code", code}}, &f.tuan).status == 400);
-    CHECK(POST("/api/order/deliver", {{"id", A}, {"code", code}, {"cash", "400000"}}, &f.tuan).status == 400);
+    // Mã 4 số đã bỏ: không ai (kể cả chủ đơn) còn thấy mã trong đơn
+    CHECK(!GET("/api/order/get", {{"id", A}}, &f.vip).has("\"code\":"));
+    CHECK(!GET("/api/state", {}, &f.admin).has("\"code\":"));
+    // Giao hai bước: thiếu tiền thu hộ → 400; đủ → "Chờ xác nhận"; chỉ người nhận (chủ đơn) bấm "Đã nhận hàng" mới hoàn tất
+    CHECK(POST("/api/order/arrive", {{"id", A}}, &f.tuan).status == 400);
+    CHECK(POST("/api/order/arrive", {{"id", A}, {"cash", "400000"}}, &f.tuan).status == 400);
     CHECK(orderStatus(f.vip, f.orderA) == "1");
-    Resp dv = POST("/api/order/deliver", {{"id", A}, {"code", code}, {"cash", "500000"}, {"note", "Gửi bảo vệ"}}, &f.tuan);
-    CHECK_MSG(dv.status == 200, dv.body);
+    Resp dv = POST("/api/order/arrive", {{"id", A}, {"cash", "500000"}, {"note", "Gửi bảo vệ"}}, &f.tuan);
+    CHECK_MSG(dv.status == 200 && dv.has("Đã nhận hàng"), dv.body);
+    CHECK(orderStatus(f.vip, f.orderA) == "8");
+    CHECK(GET("/api/order/get", {{"id", A}}, &f.vip).has("\"canReceive\":true") && GET("/api/order/get", {{"id", A}}, &f.vip).has("\"autoConfirmAt\":"));
+    CHECK(GET("/api/notifications", {}, &f.vip).has("đã giao tới đơn"));
+    CHECK(POST("/api/order/arrive", {{"id", A}, {"cash", "500000"}}, &f.tuan).status == 409);    // đã giao tới rồi
+    CHECK(POST("/api/order/receive", {{"id", A}}, &f.tuan).status == 403);                        // shipper không tự xác nhận thay người nhận
+    CHECK(POST("/api/order/receive", {{"id", A}}, &f.an).status == 403);                          // khách khác
+    CHECK(POST("/api/order/cancel", {{"id", A}}, &f.vip).status == 409);                          // đã giao tới: không huỷ nữa
+    CHECK(GET("/api/cod", {}, &f.tuan).status == 200 && jnum(GET("/api/cod", {}, &f.tuan).body, "held") == 500000);   // tiền mặt đã nằm trong tay shipper
+    CHECK(POST("/api/order/receive", {{"id", A}}, &f.vip).status == 200);
     CHECK(orderStatus(f.vip, f.orderA) == "2");
-    CHECK(POST("/api/order/deliver", {{"id", A}, {"code", code}, {"cash", "500000"}}, &f.tuan).status == 409);
+    CHECK(POST("/api/order/receive", {{"id", A}}, &f.vip).status == 409);
+    CHECK(POST("/api/order/arrive", {{"id", A}, {"cash", "500000"}}, &f.tuan).status == 409);
     CHECK(POST("/api/order/cancel", {{"id", A}}, &f.vip).status == 409);       // đơn đã giao là trạng thái cuối
     CHECK(POST("/api/shift/fail", {{"id", A}}, &f.tuan).status == 409);
     // Khách tích luỹ: +1 đơn và cước đã chi
@@ -830,12 +850,11 @@ static void testBillingFlow() {
     CHECK(POST("/api/trip/accept", {{"id", to_string(tripB)}}, &tuan).status == 200);
     CHECK(POST("/api/trip/recall", {{"id", to_string(tripB)}, {"reason", "Thử thu hồi"}}, &disp).status == 409);   // đã nhận
     // Giao: người nhận trả cước -> thu đủ COD + tổng cước; sổ COD ghi số đã thu
-    auto codeOf = [&](int id) { return jstr(GET("/api/order/get", {{"id", to_string(id)}}, &an).body, "code"); };
     long long collect1 = jnum(GET("/api/order/get", {{"id", to_string(P1)}}, &an).body, "collect");
     CHECK(collect1 == 100000 + jlast(q1.body, "total"));
-    CHECK(POST("/api/order/deliver", {{"id", to_string(P1)}, {"code", codeOf(P1)}, {"cash", "100000"}}, &tuan).status == 400);
-    CHECK(POST("/api/order/deliver", {{"id", to_string(P1)}, {"code", codeOf(P1)}, {"cash", to_string(collect1)}}, &tuan).status == 200);
-    CHECK(POST("/api/order/deliver", {{"id", to_string(P2)}, {"code", codeOf(P2)}, {"cash", "200000"}}, &tuan).status == 200);
+    CHECK(POST("/api/order/arrive", {{"id", to_string(P1)}, {"cash", "100000"}}, &tuan).status == 400);
+    CHECK(deliverBoth(tuan, an, P1, to_string(collect1)));
+    CHECK(deliverBoth(tuan, an, P2, "200000"));
     long long total2 = jnum(GET("/api/order/invoice", {{"id", to_string(P2)}}, &an).body, "total");
     Resp w1 = GET("/api/wallet", {}, &an);
     CHECK_MSG(jnum(w1.body, "pending") - pend0 == 300000 && jnum(w1.body, "balance") - bal0 == 300000 - total2, w1.body);
@@ -932,7 +951,7 @@ static void cancelOpenOrders(const Who& admin) {
 }
 
 static void testAutoMatch() {
-    cout << "== Ghép đơn tự động: shipper gần nhất, lời mời, từ chối / hết hạn → người kế, hết người → báo khách, nhả đơn, đánh giá hai chiều\n";
+    cout << "== Đơn chờ nhận: mọi shipper thấy đơn, ai bấm nhận trước giao đơn đó; giao tới → người nhận xác nhận; nhả đơn, nghỉ đột xuất, tự hoàn tất\n";
     Who admin = sharedLogin("admin", "admin123"), tuan = sharedLogin("tuan", "shipper123"), binh = sharedLogin("binh", "shipper123"),
         cuong = sharedLogin("cuong", "shipper123"), vip = sharedLogin("khachvip", "Huongviet@456"), an = login("anphat", "Ngoisao@2026");
     // Bước chuẩn bị: dọn đơn đang mở, mọi shipper có mặt và sẵn sàng, đặt vị trí đứng
@@ -940,143 +959,181 @@ static void testAutoMatch() {
     for (const char* i : {"0", "1", "2"}) POST("/api/shift/available", {{"index", i}}, &admin);
     CHECK(POST("/api/shift/absent", {{"index", "3"}}, &admin).status == 200);   // shipper mới duyệt ở bước trước: cho nghỉ để kịch bản chỉ có ba người
     for (const Who* w : {&tuan, &binh, &cuong}) POST("/api/shipper/ready", {{"ready", "1"}}, w);
-    CHECK(POST("/api/shipper/location", {{"node", "11"}}, &tuan).status == 200);    // Bến xe Miền Đông: cách kho 2 phút
-    CHECK(POST("/api/shipper/location", {{"node", "1"}}, &binh).status == 200);     // Chợ Bến Thành
-    CHECK(POST("/api/shipper/location", {{"node", "7"}}, &cuong).status == 200);    // Chợ Lớn
+    CHECK(POST("/api/shipper/location", {{"node", "11"}}, &tuan).status == 200);
+    CHECK(POST("/api/shipper/location", {{"node", "1"}}, &binh).status == 200);
+    CHECK(POST("/api/shipper/location", {{"node", "7"}}, &cuong).status == 200);
     CHECK(POST("/api/shipper/location", {{"node", "9999"}}, &tuan).status == 400);
     CHECK(POST("/api/shipper/location", {{"node", "3"}}, &vip).status == 403);
-    CHECK(POST("/api/config/update", {{"autoMatch", "1"}, {"offerSeconds", "60"}, {"matchGiveUp", "0"}, {"clockSpeed", "0"}}, &admin).status == 200);
-    CHECK(POST("/api/config/update", {{"offerSeconds", "0"}}, &admin).status == 400);
+    CHECK(POST("/api/config/update", {{"autoMatch", "1"}, {"matchGiveUp", "0"}, {"clockSpeed", "0"}, {"autoConfirmMinutes", "30"}}, &admin).status == 200);
+    CHECK(POST("/api/config/update", {{"autoConfirmMinutes", "2000"}}, &admin).status == 400);
     CHECK(POST("/api/config/update", {{"clockSpeed", "999"}}, &admin).status == 400);
-    CHECK(GET("/api/config", {}, &admin).has("\"autoMatch\":true"));
+    CHECK(GET("/api/config", {}, &admin).has("\"autoMatch\":true") && GET("/api/config", {}, &admin).has("\"autoConfirmMinutes\":30"));
     Params oneKg = {{"destination", "9"}, {"weight", "1"}, {"recipient", "Chị Hoa"}, {"phone", "0988777666"}};
-    auto offerHolder = [&](int order) -> string {   // shipper đang giữ lời mời của đơn (hoặc "")
-        for (const auto& pr : vector<pair<const char*, const Who*>>{{"tuan", &tuan}, {"binh", &binh}, {"cuong", &cuong}}) {
-            Resp st = GET("/api/state", {}, pr.second);
-            size_t t = st.body.find("\"trips\":[");
-            size_t p = st.body.find("{\"order\":" + to_string(order) + ",", t);
-            if (t != string::npos && p != string::npos) return pr.first;
-        }
-        return "";
+    auto onBoard = [&](const Who& w, int order) { return GET("/api/orders/open", {}, &w).has("{\"id\":" + to_string(order) + ","); };
+    auto rowOf = [&](const Who& w, int order) -> string {
+        string b = GET("/api/orders/open", {}, &w).body;
+        size_t p = b.find("{\"id\":" + to_string(order) + ",");
+        return p == string::npos ? "" : b.substr(p, b.find("}", p) - p);
     };
+    auto claim = [&](const Who& w, int order) { return POST("/api/order/claim", {{"id", to_string(order)}}, &w); };
     // Biên: hàng nặng hơn xe lớn nhất, giao về chính kho -> báo lỗi ngay thay vì treo đơn
     Resp hv = POST("/api/order/add", Params{{"destination", "9"}, {"weight", "500"}, {"recipient", "Chị Hoa"}, {"phone", "0988777666"}}, &vip);
     CHECK_MSG(hv.status >= 400 && hv.has("\"weight\""), hv.body);
     Resp dp = POST("/api/order/add", Params{{"destination", "0"}, {"weight", "1"}, {"recipient", "Chị Hoa"}, {"phone", "0988777666"}}, &vip);
     CHECK_MSG(dp.status >= 400 && dp.has("\"destination\""), dp.body);
-    // 1. Khách đặt đơn: không còn bước chờ xác nhận, hệ thống mời đúng shipper gần kho nhất (tuan)
+    // SĐT chỉ cần bắt đầu bằng 0 (không ép 09...): 10 hoặc 11 số
+    Resp ph1 = POST("/api/order/add", Params{{"destination", "9"}, {"weight", "1"}, {"recipient", "Chị Hoa"}, {"phone", "0338123456"}}, &vip);
+    CHECK_MSG(ph1.status == 200, ph1.body);
+    Resp ph2 = POST("/api/order/add", Params{{"destination", "9"}, {"weight", "1"}, {"recipient", "Chị Hoa"}, {"phone", "1338123456"}}, &vip);
+    CHECK(ph2.status == 400 && ph2.has("bắt đầu bằng số 0"));
+    cancelOpenOrders(admin);
+
+    // 1. Khách đặt đơn: đơn "Chờ giao" hiện trên bảng của MỌI shipper, ai cũng được báo
     Resp c1 = POST("/api/order/add", oneKg, &vip);
-    CHECK_MSG(c1.status == 200 && c1.has("tìm shipper"), c1.body);
+    CHECK_MSG(c1.status == 200, c1.body);
     int O1 = (int)jnum(c1.body, "created");
-    CHECK(orderStatus(vip, O1) == "7" && offerHolder(O1) == "tuan");
-    Resp ts = GET("/api/state", {}, &tuan);
-    CHECK(ts.has("\"accepted\":false") && ts.has("\"offerLeft\":") && ts.has("Ghép tự động"));
-    CHECK(!GET("/api/state", {}, &binh).has("\"order\":" + to_string(O1) + ","));      // shipper khác không thấy lời mời
-    CHECK(GET("/api/notifications", {}, &tuan).has("gần bạn"));
-    // Khách chưa biết ai được mời; không sửa được đơn đang chờ shipper trả lời
-    CHECK(!GET("/api/order/get", {{"id", to_string(O1)}}, &vip).has("Anh Tuấn"));
-    CHECK(GET("/api/order/get", {{"id", to_string(O1)}}, &vip).has("\"cancelFeeNow\":0"));   // lời mời chưa ai nhận: huỷ miễn phí
-    CHECK(POST("/api/order/edit", {{"id", to_string(O1)}, {"weight", "2"}}, &vip).status == 409);
-    // 2. Shipper từ chối (bắt buộc lý do) → đơn chuyển cho người gần kế tiếp (binh), không mời lại tuan
-    int tripT = pendingTrip(ts.body);
-    CHECK(tripT > 0 && POST("/api/trip/decline", {{"id", to_string(tripT)}}, &tuan).status == 400);
-    CHECK(POST("/api/trip/decline", {{"id", to_string(tripT)}, {"reason", "Đang ăn trưa"}}, &tuan).status == 200);
-    CHECK(offerHolder(O1) == "binh" && orderStatus(vip, O1) == "7");
-    // 3. Shipper tắt "sẵn sàng" khi đang giữ lời mời: lời mời bị gỡ, đơn sang người kế (cuong, xe tải chở được 1kg)
-    CHECK(POST("/api/shipper/ready", {{"ready", "0"}}, &binh).status == 200);
-    CHECK(offerHolder(O1) == "cuong");
-    CHECK(POST("/api/shipper/ready", {{"ready", "1"}}, &binh).status == 200);
-    // 4. Nhận lời mời: đơn "Đang giao", khách thấy thông tin shipper (tên, xe, biển số), không đổi vị trí khi đang bận
-    int tripC = pendingTrip(GET("/api/state", {}, &cuong).body);
-    CHECK(tripC > 0 && POST("/api/trip/accept", {{"id", to_string(tripC)}}, &binh).status == 403);
-    CHECK(POST("/api/trip/accept", {{"id", to_string(tripC)}}, &cuong).status == 200);
-    Resp od = GET("/api/order/get", {{"id", to_string(O1)}}, &vip);
-    CHECK(orderStatus(vip, O1) == "1" && od.has("Anh Cường") && od.has("51C-333.33") && od.has("\"cancelFeeNow\":"));
-    CHECK(POST("/api/shipper/location", {{"node", "3"}}, &cuong).status == 409);
-    CHECK(POST("/api/shipper/vehicle", {{"vehicle", "2"}, {"capacity", "60"}, {"plate", "51C-333.33"}}, &cuong).status == 409);
-    // 5. Huỷ khi shipper đã nhận mà chưa lấy hàng: bắt buộc lý do; có phí huỷ; shipper nhận thông báo kèm lý do; shipper rảnh lại
-    Resp o2 = POST("/api/order/add", oneKg, &an);
-    int O2 = (int)jnum(o2.body, "created");
-    string h2 = offerHolder(O2);
-    CHECK(h2 == "tuan");
-    CHECK(POST("/api/trip/accept", {{"id", to_string(pendingTrip(GET("/api/state", {}, &tuan).body))}}, &tuan).status == 200);
-    CHECK(POST("/api/order/cancel", {{"id", to_string(O2)}}, &an).status == 400);
-    Resp cn = POST("/api/order/cancel", {{"id", to_string(O2)}, {"reason", "Đặt nhầm địa chỉ"}}, &an);
-    CHECK_MSG(cn.status == 200 && jlast(cn.body, "cancelFee") > 0, cn.body);
-    CHECK(GET("/api/notifications", {}, &tuan).has("Đặt nhầm địa chỉ"));
-    CHECK(GET("/api/order/get", {{"id", to_string(O2)}}, &an).has("Đặt nhầm địa chỉ"));
-    // 6. Giao hàng bằng mã; shipper đánh giá khách (hai chiều); khách đánh giá shipper
-    string code = jstr(GET("/api/order/get", {{"id", to_string(O1)}}, &vip).body, "code");
-    CHECK(POST("/api/order/deliver", {{"id", to_string(O1)}, {"code", code}}, &cuong).status == 200);
-    CHECK(orderStatus(vip, O1) == "2");
-    CHECK(POST("/api/order/rate-customer", {{"id", to_string(O1)}, {"stars", "4"}}, &vip).status == 403);
-    CHECK(POST("/api/order/rate-customer", {{"id", to_string(O1)}, {"stars", "4"}}, &tuan).status == 403);   // không phải đơn tuan giao
-    CHECK(POST("/api/order/rate-customer", {{"id", to_string(O1)}, {"stars", "9"}}, &cuong).status == 400);
-    CHECK(POST("/api/order/rate-customer", {{"id", to_string(O1)}, {"stars", "5"}, {"comment", "Khách thân thiện"}}, &cuong).status == 200);
-    CHECK(POST("/api/order/rate-customer", {{"id", to_string(O1)}, {"stars", "5"}}, &cuong).status == 409);
-    CHECK(GET("/api/notifications", {}, &vip).has("đánh giá bạn 5 sao"));
-    CHECK(POST("/api/order/rate", {{"id", to_string(O1)}, {"stars", "5"}}, &vip).status == 200);
-    // 7. Nhả đơn (như tài xế Grab huỷ chuyến): cần lý do, đơn đi tìm người khác, không mời lại người vừa nhả
-    Resp o3 = POST("/api/order/add", oneKg, &vip);
-    int O3 = (int)jnum(o3.body, "created");
-    string h3 = offerHolder(O3);
-    CHECK(h3 == "tuan");   // tuan đã rảnh (đơn O2 bị huỷ), vẫn gần kho nhất
-    CHECK(POST("/api/trip/accept", {{"id", to_string(pendingTrip(GET("/api/state", {}, &tuan).body))}}, &tuan).status == 200);
-    CHECK(POST("/api/order/release", {{"id", to_string(O3)}}, &tuan).status == 400);
-    CHECK(POST("/api/order/release", {{"id", to_string(O3)}}, &binh).status == 403);
-    CHECK(POST("/api/order/release", {{"id", to_string(O3)}, {"reason", "Xe hết xăng"}}, &tuan).status == 200);
-    string h3b = offerHolder(O3);
-    CHECK(h3b == "binh" && orderStatus(vip, O3) == "7");   // binh ở Bến Thành (14 phút tới kho giờ cao điểm), gần hơn cuong vừa giao xong ở Sân bay
-    // 8. Quản trị viên cho shipper đang giữ đơn nghỉ đột xuất: đơn chuyển người khác
-    CHECK(POST("/api/trip/accept", {{"id", to_string(pendingTrip(GET("/api/state", {}, &binh).body))}}, &binh).status == 200);
-    CHECK(POST("/api/shift/absent", {{"index", "1"}}, &vip).status == 403);
-    CHECK(POST("/api/shift/absent", {{"index", "1"}}, &admin).status == 200);
-    string h3c = offerHolder(O3);
-    CHECK_MSG(h3c == "cuong", h3c);   // tuan đã nhả đơn này, binh nghỉ: chỉ còn cuong
-    CHECK(POST("/api/shift/available", {{"index", "1"}}, &admin).status == 200);
-    // 9. Hết hạn trả lời: offerSeconds = 1; không ai nhận thì lần lượt mời hết cả đội, rồi báo khách "chưa có shipper"
-    cancelOpenOrders(admin);
-    CHECK(POST("/api/config/update", {{"offerSeconds", "1"}}, &admin).status == 200);
-    Resp o4 = POST("/api/order/add", oneKg, &an);
-    int O4 = (int)jnum(o4.body, "created");
-    CHECK(orderStatus(an, O4) == "7");
-    string firstHolder = offerHolder(O4);
-    CHECK(!firstHolder.empty());
-    bool exhausted = false;
-    for (int i = 0; i < 8 && !exhausted; ++i) {
-        waitSeconds(2.2);
-        GET("/api/me", {}, &an);   // mỗi yêu cầu chạy một nhịp kiểm tra hết hạn
-        exhausted = GET("/api/order/get", {{"id", to_string(O4)}}, &an).has("\"noShipper\":true");
+    CHECK(orderStatus(vip, O1) == "0");
+    for (const Who* w : {&tuan, &binh, &cuong}) {
+        CHECK(onBoard(*w, O1));
+        CHECK(GET("/api/notifications", {}, w).has("Có đơn mới #" + to_string(O1)));
     }
-    CHECK(exhausted && orderStatus(an, O4) == "0");
-    CHECK(GET("/api/notifications", {}, &an).has("Chưa có shipper nhận đơn"));
-    CHECK(GET("/api/notifications", {}, &tuan).has("bỏ lỡ lời mời"));
-    // 10. Khách bấm "Tìm lại": mời lại từ đầu; người khác không tìm lại hộ được
-    CHECK(POST("/api/order/retry", {{"id", to_string(O4)}}, &vip).status == 403);
-    CHECK(POST("/api/order/retry", {{"id", to_string(O4)}}, &an).status == 200);
-    CHECK(orderStatus(an, O4) == "7" && !offerHolder(O4).empty());
-    CHECK(POST("/api/order/retry", {{"id", to_string(O4)}}, &an).status == 409);   // đang có lời mời, không còn ở Chờ giao
-    CHECK(POST("/api/config/update", {{"offerSeconds", "60"}}, &admin).status == 200);
-    // 11. Đơn nặng: chỉ xe tải (cuong) chở nổi → tuan, binh bị bỏ qua dù gần hơn
-    cancelOpenOrders(admin);
+    string row = rowOf(binh, O1);
+    CHECK(row.find("\"canClaim\":true") != string::npos && row.find("\"earn\":") != string::npos && row.find("\"approachMinutes\":") != string::npos);
+    CHECK(!GET("/api/orders/open", {}, &binh).has("0988777666") && !GET("/api/orders/open", {}, &binh).has("Chị Hoa"));   // chưa nhận thì chưa thấy SĐT / tên người nhận
+    CHECK(GET("/api/orders/open", {}, &vip).status == 403 && GET("/api/orders/open", {}, &admin).status == 403);
+    CHECK(GET("/api/orders/open").status == 401);
+    CHECK(POST("/api/order/claim", {{"id", to_string(O1)}}, &vip).status == 403 && POST("/api/order/claim", {{"id", to_string(O1)}}, &admin).status == 403);
+    // 2. Tranh chấp: cuong bấm trước → được đơn; binh, tuan bấm sau → 409 "vừa được shipper khác nhận"
+    Resp k1 = claim(cuong, O1);
+    CHECK_MSG(k1.status == 200 && k1.has("Bạn đã nhận đơn"), k1.body);
+    Resp k2 = claim(binh, O1), k3 = claim(tuan, O1), k4 = claim(cuong, O1);
+    CHECK_MSG(k2.status == 409 && k2.has("vừa được shipper khác nhận"), k2.body);
+    CHECK(k3.status == 409 && k3.has("vừa được shipper khác nhận"));
+    CHECK_MSG(k4.status == 409 && k4.has("đã nhận đơn"), k4.body);
+    CHECK(orderStatus(vip, O1) == "1" && !onBoard(binh, O1) && !onBoard(tuan, O1));
+    Resp od = GET("/api/order/get", {{"id", to_string(O1)}}, &vip);
+    CHECK(od.has("Anh Cường") && od.has("51C-333.33") && od.has("\"cancelFeeNow\":"));
+    CHECK(GET("/api/notifications", {}, &vip).has("đã nhận đơn"));
+    CHECK(GET("/api/order/get", {{"id", to_string(O1)}}, &cuong).has("0988777666"));   // nhận rồi mới thấy SĐT người nhận
+    CHECK(!GET("/api/order/get", {{"id", to_string(O1)}}, &cuong).has("customerRating"));   // không còn đánh giá khách
+    CHECK(POST("/api/shipper/location", {{"node", "3"}}, &cuong).status == 409);
+    // 3. Mỗi shipper chỉ giữ một chuyến: cuong đang cầm O1 thì thấy đơn mới nhưng không bấm nhận được
+    int O2 = (int)jnum(POST("/api/order/add", oneKg, &an).body, "created");
+    CHECK(onBoard(cuong, O2) && rowOf(cuong, O2).find("\"canClaim\":false") != string::npos && rowOf(cuong, O2).find("giao xong đơn đang cầm") != string::npos);
+    CHECK(claim(cuong, O2).status == 409 && orderStatus(an, O2) == "0");
+    // 4. Đơn nặng 30 kg: chỉ xe tải (cuong) chở nổi; tuan (xe máy) thấy nhưng không nhận được
     Params heavy = oneKg;
     for (auto& kv : heavy) if (kv.first == "weight") kv.second = "30";
-    int O5 = (int)jnum(POST("/api/order/add", heavy, &vip).body, "created");
-    CHECK(O5 > 0 && offerHolder(O5) == "cuong");
-    // 12. Quản trị viên vẫn thu hồi lời mời được; lời mời bị thu hồi chuyển tiếp ngay
-    int tripH = pendingTrip(GET("/api/state", {}, &cuong).body);
-    CHECK(POST("/api/trip/recall", {{"id", to_string(tripH)}, {"reason", "Xe tải bận việc khác"}}, &admin).status == 200);
-    CHECK(orderStatus(vip, O5) == "0" || orderStatus(vip, O5) == "7");
-    // 13. Tắt ghép tự động: đơn của khách quay lại luồng cũ (chờ xác nhận), không ai được mời
+    int O3 = (int)jnum(POST("/api/order/add", heavy, &vip).body, "created");
+    CHECK(rowOf(tuan, O3).find("\"canClaim\":false") != string::npos && rowOf(tuan, O3).find("tải trọng") != string::npos);
+    CHECK(claim(tuan, O3).status == 409 && orderStatus(vip, O3) == "0");
+    // Đơn hoả tốc / hạn sớm lên đầu bảng; đơn của khách yêu thích bạn lên trước tất cả
+    Resp bd = GET("/api/orders/open", {}, &tuan);
+    CHECK(bd.body.find("{\"id\":" + to_string(O2) + ",") < bd.body.find("{\"id\":" + to_string(O3) + ","));   // cùng mức ưu tiên: đơn cũ trước
+    // 5. Giao hai bước: cuong "Đã giao tới" → "Chờ xác nhận" (cuong rảnh để nhận đơn khác); người nhận báo chưa nhận → quay lại Đang giao
+    CHECK(arrive(cuong, O1));
+    CHECK(orderStatus(vip, O1) == "8");
+    CHECK(rowOf(cuong, O2).find("\"canClaim\":true") != string::npos);   // đã giao tới nơi nên không còn bận
+    CHECK(POST("/api/order/dispute", {{"id", to_string(O1)}}, &an).status == 403 && POST("/api/order/dispute", {{"id", to_string(O1)}}, &cuong).status == 403);
+    Resp dsp = POST("/api/order/dispute", {{"id", to_string(O1)}, {"reason", "Chưa thấy ai giao"}}, &vip);
+    CHECK_MSG(dsp.status == 200 && orderStatus(vip, O1) == "1", dsp.body);
+    CHECK(GET("/api/notifications", {}, &cuong).has("CHƯA nhận được"));
+    CHECK(GET("/api/state", {}, &admin).has("\"disputed\""));   // cảnh báo cho quản trị viên
+    CHECK(arrive(cuong, O1) && orderStatus(vip, O1) == "8");
+    CHECK(POST("/api/order/dispute", {{"id", to_string(O1)}}, &vip).status == 200 && arrive(cuong, O1));   // lần báo thứ hai
+    CHECK(POST("/api/order/dispute", {{"id", to_string(O1)}}, &vip).status == 409 && GET("/api/order/get", {{"id", to_string(O1)}}, &vip).has("\"canDispute\":false"));   // hết lượt báo
+    // Người nhận không có tài khoản xác nhận ngay trên trang tra cứu (mã đơn + SĐT); sai SĐT → cùng thông báo như tra cứu
+    Resp tr = GET("/api/track", {{"code", to_string(O1)}, {"phone", "0988777666"}});
+    CHECK(tr.status == 200 && tr.has("\"canConfirm\":true") && tr.has("\"autoConfirmAt\":"));
+    CHECK(POST("/api/track/confirm", {{"code", to_string(O1)}, {"phone", "0988000000"}}).status == 400);
+    CHECK(POST("/api/track/confirm", {{"code", to_string(O1)}, {"phone", "0988777666"}, {"action", "xoa"}}).status == 400);
+    Resp pc = POST("/api/track/confirm", {{"code", to_string(O1)}, {"phone", "0988777666"}, {"action", "receive"}});
+    CHECK_MSG(pc.status == 200 && orderStatus(vip, O1) == "2", pc.body);
+    CHECK(POST("/api/track/confirm", {{"code", to_string(O1)}, {"phone", "0988777666"}, {"action", "receive"}}).status == 409);
+    CHECK(GET("/api/order/get", {{"id", to_string(O1)}}, &vip).has("\"receivedBy\":\"nguoi_nhan\""));
+    CHECK(POST("/api/order/rate", {{"id", to_string(O1)}, {"stars", "5"}}, &vip).status == 200);   // khách vẫn đánh giá shipper
+    // Đánh giá khách hàng của shipper đã bỏ
+    CHECK(POST("/api/order/rate-customer", {{"id", to_string(O1)}, {"stars", "5"}}, &cuong).status >= 400);
+    // 6. cuong nhận O2 (khách an), giao tới, khách bấm "Đã nhận hàng"
+    CHECK(claim(cuong, O2).status == 200);
+    CHECK(arrive(cuong, O2) && orderStatus(an, O2) == "8");
+    CHECK(GET("/api/orders/list", {{"status", "8"}}, &an).has("\"id\":" + to_string(O2)));
+    CHECK(receive(an, O2) && orderStatus(an, O2) == "2");
+    // 7. Nhả đơn: cần lý do; đơn quay lại bảng cho shipper KHÁC (người nhả không nhận lại)
+    CHECK(claim(binh, O3).status == 409);   // O3 nặng, binh là xe máy
+    int O4 = (int)jnum(POST("/api/order/add", oneKg, &vip).body, "created");
+    CHECK(claim(tuan, O4).status == 200);
+    CHECK(POST("/api/order/release", {{"id", to_string(O4)}}, &tuan).status == 400);
+    CHECK(POST("/api/order/release", {{"id", to_string(O4)}}, &binh).status == 403);
+    CHECK(POST("/api/order/release", {{"id", to_string(O4)}, {"reason", "Xe hết xăng"}}, &tuan).status == 200);
+    CHECK(orderStatus(vip, O4) == "0" && onBoard(binh, O4) && onBoard(cuong, O4));
+    CHECK(rowOf(tuan, O4).find("Bạn đã nhả đơn này") != string::npos && claim(tuan, O4).status == 409);
+    CHECK(GET("/api/notifications", {}, &binh).has("Có đơn mới #" + to_string(O4)));
+    // 8. Quản trị viên cho shipper đang giữ đơn nghỉ đột xuất: đơn quay lại bảng cho người khác
+    CHECK(claim(binh, O4).status == 200);
+    CHECK(POST("/api/shift/absent", {{"index", "1"}}, &vip).status == 403);
+    CHECK(POST("/api/shift/absent", {{"index", "1"}}, &admin).status == 200);
+    CHECK(orderStatus(vip, O4) == "0");
+    CHECK_MSG(onBoard(cuong, O4), GET("/api/orders/open", {}, &cuong).body);
+    CHECK(!onBoard(binh, O4) || rowOf(binh, O4).find("\"canClaim\":false") != string::npos);   // nghỉ đột xuất: thấy nhưng không nhận được
+    CHECK(binh.cookie.empty() || claim(binh, O4).status == 409);   // binh đang nghỉ đột xuất
+    CHECK(POST("/api/shift/available", {{"index", "1"}}, &admin).status == 200);
+    CHECK(claim(binh, O4).status == 409 && rowOf(binh, O4).find("canClaim\":false") != string::npos);   // binh đã bị đơn này loại (đã nhận rồi nghỉ)
+    // 9. Khách huỷ đơn đang chờ nhận: miễn phí, đơn biến mất khỏi bảng; shipper bấm nhận sau đó nhận lỗi 409
+    CHECK(POST("/api/order/cancel", {{"id", to_string(O4)}}, &vip).status == 200);
+    CHECK(!onBoard(cuong, O4) && claim(cuong, O4).status == 409);
+    // 10. Không shipper nào nhận được (đều tắt sẵn sàng): báo khách; khi có người bật lại thì đơn được báo; "Tìm lại" chỉ dùng cho đơn đang chờ
+    for (const Who* w : {&tuan, &binh, &cuong}) POST("/api/shipper/ready", {{"ready", "0"}}, w);
+    int O5 = (int)jnum(POST("/api/order/add", oneKg, &an).body, "created");
+    CHECK(orderStatus(an, O5) == "0" && GET("/api/order/get", {{"id", to_string(O5)}}, &an).has("\"noShipper\":true"));
+    CHECK(GET("/api/notifications", {}, &an).has("Chưa có shipper nhận đơn"));
+    CHECK(POST("/api/order/retry", {{"id", to_string(O5)}}, &vip).status == 403);
+    CHECK(POST("/api/order/retry", {{"id", to_string(O5)}}, &an).status == 200);
+    CHECK(rowOf(tuan, O5).empty() || rowOf(tuan, O5).find("canClaim\":false") != string::npos);
+    CHECK(claim(tuan, O5).status == 409 && claim(tuan, O5).has("tạm nghỉ"));
+    POST("/api/shipper/ready", {{"ready", "1"}}, &tuan);
+    waitSeconds(2.2);
+    GET("/api/me", {}, &an);   // mỗi yêu cầu chạy một nhịp báo đơn
+    CHECK(GET("/api/notifications", {}, &tuan).has("Có đơn mới #" + to_string(O5)));
+    CHECK(claim(tuan, O5).status == 200);
+    CHECK(POST("/api/order/retry", {{"id", to_string(O5)}}, &an).status == 409);   // đã có shipper: không còn ở Chờ giao
+    for (const Who* w : {&binh, &cuong}) POST("/api/shipper/ready", {{"ready", "1"}}, w);
+    // 11. Tự hoàn tất: người nhận không phản hồi quá autoConfirmMinutes thì đơn hoàn tất (1 phút để kiểm thử)
+    CHECK(arrive(tuan, O5) && orderStatus(an, O5) == "8");
+    CHECK(POST("/api/config/update", {{"autoConfirmMinutes", "1"}}, &admin).status == 200);
+    bool done = false;
+    for (int i = 0; i < 4 && !done; ++i) {
+        waitSeconds(20);
+        GET("/api/me", {}, &an);
+        done = orderStatus(an, O5) == "2";
+    }
+    CHECK_MSG(done, "đơn chờ xác nhận quá hạn chưa tự hoàn tất");
+    CHECK(GET("/api/order/get", {{"id", to_string(O5)}}, &an).has("\"receivedBy\":\"tu_dong\"") && GET("/api/notifications", {}, &an).has("tự hoàn tất"));
+    CHECK(POST("/api/config/update", {{"autoConfirmMinutes", "30"}}, &admin).status == 200);
+    // 12. Quản trị viên xác nhận giao thay (bắt buộc lý do): đơn đang giao hoặc đang chờ xác nhận
+    int O6 = (int)jnum(POST("/api/order/add", oneKg, &vip).body, "created");
+    CHECK(claim(tuan, O6).status == 200 && arrive(tuan, O6));
+    CHECK(POST("/api/order/receive", {{"id", to_string(O6)}}, &admin).status == 400);                     // thiếu lý do
+    CHECK(POST("/api/order/receive", {{"id", to_string(O6)}, {"note", "Khách gọi điện xác nhận"}}, &admin).status == 200);
+    CHECK(orderStatus(vip, O6) == "2" && GET("/api/order/get", {{"id", to_string(O6)}}, &vip).has("\"receivedBy\":\"qt:admin\""));
+    int O7 = (int)jnum(POST("/api/order/add", oneKg, &vip).body, "created");
+    CHECK(claim(tuan, O7).status == 200);
+    CHECK(POST("/api/order/deliver", {{"id", to_string(O7)}, {"note", "Shipper mất điện thoại"}}, &tuan).status == 403);
+    CHECK(POST("/api/order/deliver", {{"id", to_string(O7)}}, &admin).status == 400);
+    CHECK(POST("/api/order/deliver", {{"id", to_string(O7)}, {"note", "Shipper mất điện thoại"}}, &admin).status == 200 && orderStatus(vip, O7) == "2");
+    // 13. Tắt nhận đơn tự do (quản trị viên phân công tay): bảng trống, không nhận được; đơn khách đặt quay lại luồng chờ xác nhận
     cancelOpenOrders(admin);
     CHECK(POST("/api/config/update", {{"autoMatch", "0"}}, &admin).status == 200);
-    int O6 = (int)jnum(POST("/api/order/add", oneKg, &vip).body, "created");
-    CHECK(orderStatus(vip, O6) == "6" && offerHolder(O6).empty());
-    // Bật lại: đơn Chờ giao (đã xác nhận) được mời ngay
-    CHECK(POST("/api/order/confirm", {{"id", to_string(O6)}}, &admin).status == 200);
-    CHECK(orderStatus(vip, O6) == "0");
+    int O8 = (int)jnum(POST("/api/order/add", oneKg, &vip).body, "created");
+    CHECK(orderStatus(vip, O8) == "6" && !onBoard(tuan, O8));
+    CHECK(POST("/api/order/confirm", {{"id", to_string(O8)}}, &admin).status == 200);
+    CHECK(orderStatus(vip, O8) == "0" && !onBoard(tuan, O8) && GET("/api/orders/open", {}, &tuan).has("\"enabled\":false"));
+    CHECK(claim(tuan, O8).status == 409);
+    // Bật lại: đơn Chờ giao (đã xác nhận) hiện ngay trên bảng
     CHECK(POST("/api/config/update", {{"autoMatch", "1"}}, &admin).status == 200);
-    CHECK(orderStatus(vip, O6) == "7");
+    waitSeconds(2.2);
+    GET("/api/me", {}, &vip);
+    CHECK(onBoard(tuan, O8) && onBoard(binh, O8));
     // 14. Vai trò điều phối viên đã bỏ: không còn trong API, tài khoản cũ được khoá chờ quản trị viên chọn lại
     CHECK(POST("/api/users/add", {{"username", "dpcu"}, {"role", "dispatcher"}, {"password", "Quanly@456"}, {"displayName", "Điều phối cũ"}}, &admin).status == 400);
     CHECK(!GET("/api/state", {}, &admin).has("\"role\":\"dispatcher\""));
@@ -1093,7 +1150,7 @@ static void testPersistence(const string& dir) {
     };
     CHECK(read("users.txt").find("khachmoi") != string::npos && read("users.txt").find("Bautroi@2026") == string::npos);
     CHECK(read("orders_live.txt").find("kh=khachvip") != string::npos && read("orders_live.txt").find("tt=2") != string::npos);
-    CHECK(read("audit.txt").find("order.deliver") != string::npos);
+    CHECK(read("audit.txt").find("order.receive") != string::npos && read("audit.txt").find("order.arrive") != string::npos);
     CHECK(read("cod_ledger.txt").find("Anh") != string::npos);
     CHECK(read("complaints.txt").find("Thiếu") != string::npos);
     CHECK(read("notifications.txt").find("khachvip") != string::npos);

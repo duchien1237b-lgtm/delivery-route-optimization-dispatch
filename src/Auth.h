@@ -29,7 +29,7 @@
 #include <unordered_map>
 #include <vector>
 
-bool validPhone(const std::string& s);   // FileIO.h: 10 chữ số, bắt đầu bằng 0
+bool validPhone(const std::string& s);   // FileIO.h: bắt đầu bằng 0, 10–11 chữ số
 
 namespace Auth {
 
@@ -92,7 +92,7 @@ std::string checkPassword(const std::string& p);    // mức tối thiểu: >= M
 std::string checkPasswordStrong(const std::string& p, const std::string& username = "");   // chính sách đầy đủ
 bool isCommonPassword(const std::string& p);
 std::string checkEmail(const std::string& e);       // định dạng cơ bản, <= 80 ký tự
-std::string checkPhone(const std::string& p);       // 10 chữ số, bắt đầu bằng 0
+std::string checkPhone(const std::string& p);       // bắt đầu bằng 0, 10–11 chữ số
 std::string checkDisplayName(const std::string& n); // 2–40 ký tự, không có < > = hoặc ký tự điều khiển
 std::string checkPlate(const std::string& p);       // biển số: chữ in hoa, số, '-', '.', 4–12 ký tự
 std::string normalizeEmail(const std::string& e);   // chữ thường, bỏ khoảng trắng hai đầu

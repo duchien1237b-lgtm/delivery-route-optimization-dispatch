@@ -45,7 +45,7 @@ const char* compensationKindName(const std::string& kind);
 // ------------------------------------------------------------ Sổ giao dịch của khách
 struct Tx {
     int id = 0;
-    std::string kind;        // payout | collect | comp
+    std::string kind;        // payout | collect | comp | tip (tiền tip khách tặng shipper, trừ vào ví)
     std::string customer;
     long long amount = 0;    // > 0
     int64_t at = 0;
@@ -63,6 +63,7 @@ public:
     std::string add(Tx tx, int& id);
     std::vector<const Tx*> of(const std::string& customer) const;
     const Tx* ofComplaint(int complaint) const;
+    const Tx* tipOf(int order) const;   // tiền tip của một đơn (nullptr nếu chưa tip)
     const std::vector<Tx>& all() const { return items_; }
 
 private:
@@ -83,7 +84,7 @@ struct OrderFacts {
 };
 struct Line {
     int64_t at = 0;
-    std::string kind;        // cod | fee | return | cancel | comp | payout | collect
+    std::string kind;        // cod | fee | return | cancel | comp | payout | collect | tip
     int order = 0;
     long long amount = 0;    // + khách được nhận, − khách phải trả
     bool pending = false;
@@ -93,7 +94,7 @@ struct Line {
 struct Statement {
     std::vector<Line> lines;          // theo thời gian tăng dần
     long long balance = 0, pending = 0, available = 0;
-    long long codTotal = 0, fees = 0, comps = 0, paidOut = 0, collected = 0;
+    long long codTotal = 0, fees = 0, comps = 0, paidOut = 0, collected = 0, tips = 0;
 };
 Statement statement(const std::vector<OrderFacts>& orders, const std::vector<const Tx*>& txs);
 

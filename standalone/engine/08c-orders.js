@@ -115,19 +115,25 @@ function readOrderFields(r, o0) {
   o.cod = cod;
   o.phone = normalizePhone(str(r, "phone", o.phone));
   if (o.phone && !validPhone(o.phone))
-    throw new Invalid("Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0", { phone: "10 chữ số, bắt đầu bằng 0" });
+    throw new Invalid("Số điện thoại phải bắt đầu bằng số 0 và gồm 10–11 chữ số", { phone: "Bắt đầu bằng 0, 10–11 chữ số" });
   o.recipient = trimmed(str(r, "recipient", o.recipient)).replace(/[#\n\r_]/g, " ");
   if (ulen(o.recipient) > 60)
     throw new Invalid("Tên người nhận quá dài (tối đa 60 ký tự)", { recipient: "Tối đa 60 ký tự" });
   if (o.cod > 0 && !o.phone)
     throw new Invalid("Đơn thu hộ cần số điện thoại người nhận để xác nhận khi giao", { phone: "Bắt buộc với đơn thu hộ" });
   readBillingFields(r, o);
+  if (has(r, "category")) {
+    const cat = trimmed(str(r, "category"));
+    if (cat && !validCategory(cat))
+      throw new Invalid("Loại hàng không hợp lệ", { category: "Chọn loại hàng" });
+    o.category = cat;
+  }
   if (o.receiverPays && !o.phone)
     throw new Invalid("Người nhận trả cước thì cần số điện thoại người nhận", { phone: "Bắt buộc khi người nhận trả cước" });
   return o;
 }
 var nextOrderId = () => S.orders.reduce((m, o) => Math.max(m, o.id), 100) + 1;
-var isOpenStatus = (st) => st === CREATED || st === PENDING || st === DISPATCHED || st === ASSIGNED || st === FAILED;
+var isOpenStatus = (st) => st === CREATED || st === PENDING || st === DISPATCHED || st === ASSIGNED || st === ARRIVED || st === FAILED;
 var newOrder = () => ({ ...newOrderRecord(), id: -1, destination: -1, shipper: -1, status: PENDING, tried: [], searchSince: 0, noShipperAt: 0 });
 // Hạn giao là phút tính từ đầu ca: không nhận hạn đã qua so với đồng hồ ca hiện tại
 function checkDeadlineAhead(o) {
@@ -172,6 +178,11 @@ function createOrder(r) {
     if (!o.phone)
       throw new Invalid("Hãy nhập số điện thoại người nhận", { phone: "Hãy nhập số điện thoại người nhận" });
     o.owner = S.me.username;
+    // Loại hàng + cam kết không gửi hàng cấm (như GrabExpress). Ứng dụng cũ không gửi loại hàng: coi là "Khác".
+    if (has(r, "category") && !flag(r, "pledge"))
+      throw new Invalid("Hãy xác nhận hàng gửi không thuộc danh mục cấm vận chuyển", { pledge: "Bắt buộc xác nhận" });
+    if (!o.category)
+      o.category = "khac";
     const open = S.orders.filter((x) => x.owner === o.owner && isOpenStatus(x.status)).length;
     if (open >= cfg.maxOpenOrders)
       throw new BadRequest(`Bạn đang có ${open} đơn chưa hoàn tất (tối đa ${cfg.maxOpenOrders}). Hãy đợi các đơn này xong rồi đặt thêm.`);
@@ -222,7 +233,7 @@ function createOrder(r) {
   matchPending();
   const cur = findOrderById(newId);
   // sau khi ghép: có thể đã được mời cho một shipper
-  return { ...stateJson(), created: newId, order: { id: newId, status: cur.status, net: q.net, total: q.total }, message: isCustomer() ? `Đã tạo đơn ${newId}` + (cfg.autoMatch ? ", hệ thống đang tìm shipper gần nhất" : ", đang chờ quản trị viên xác nhận") : `Đã tạo đơn ${newId}` };
+  return { ...stateJson(), created: newId, order: { id: newId, status: cur.status, net: q.net, total: q.total }, message: isCustomer() ? `Đã tạo đơn ${newId}` + (cfg.autoMatch ? ", đơn đang chờ shipper nhận" : ", đang chờ quản trị viên xác nhận") : `Đã tạo đơn ${newId}` };
 }
 // Nhân viên sửa đơn Mới / Chờ giao; khách tự sửa đơn của mình khi còn ở trạng thái Mới (chưa được xác nhận)
 function updateOrder(r) {
@@ -246,6 +257,10 @@ function updateOrder(r) {
       throw new Invalid(`Kho chưa có đường tới ${nodeName(edited.destination)}`, { destination: "Chưa có đường tới điểm này" });
     if (edited.destination !== o.destination)
       edited.address = 0;
+    if (!edited.category)
+      edited.category = o.category ? o.category : "khac";
+    if (edited.category !== o.category && !flag(r, "pledge"))
+      throw new Invalid("Đổi loại hàng thì hãy xác nhận lại hàng không thuộc danh mục cấm", { pledge: "Bắt buộc xác nhận" });
   }
   if (has(r, "owner") && isAdmin()) {
     edited.owner = lowerCopy(str(r, "owner"));
@@ -286,7 +301,7 @@ function removeOrder(r) {
   if (i < 0)
     throw new BadRequest(`Không có đơn ${id}`);
   const o = S.orders[i];
-  if (o.status === ASSIGNED || o.status === DISPATCHED)
+  if (o.status === ASSIGNED || o.status === DISPATCHED || o.status === ARRIVED)
     throw new Conflict(`Đơn ${id} đang trong chuyến giao. Huỷ hoặc thu hồi phân công trước rồi mới xoá.`);
   if (o.status === CREATED || o.status === PENDING)
     releasePromo(o);
@@ -316,6 +331,7 @@ function confirmOrder(r) {
   logOrder("confirmed", o, S.me.username);
   audit("order.confirm", String(o.id));
   o.searchSince = nowSeconds();
+  o.opened = false;
   notify(o.owner, "order", o.id, `Đơn #${o.id} đã được xác nhận, hệ thống đang tìm shipper`);
   matchPending();
   return { ...stateJson(), message: `Đã xác nhận đơn ${o.id}` };
@@ -413,26 +429,31 @@ function onDelivered(o) {
   }
   mark(D_ORDERS);
 }
-function deliverOrder(r) {
+// Hoàn tất đơn khi người nhận xác nhận "Đã nhận hàng" (hoặc hệ thống tự hoàn tất / quản trị viên xác nhận thay).
+// by: khach | nguoi_nhan | tu_dong | qt:<tên quản trị viên>
+function completeReceipt(o, by, note = "") {
+  const at = Math.max(S.shift.clock, o.eta);
+  S.shift.advance(at);
+  if (!S.shift.deliver(o.id, S.orders, at))
+    return false;
+  o.deliveredReal = nowSeconds();
+  o.receivedBy = by;
+  if (note)
+    o.proofNote = note;
+  onDelivered(o);
+  matchPending();
+  return true;
+}
+// Bước 1: shipper tới nơi và bấm "Đã giao tới" (thu đủ tiền mặt nếu đơn có COD / người nhận trả cước).
+function arriveOrder(r) {
   const id = integer(r, "id");
   const o = orderForActor(id);
   if (isShipper() && o.shipper !== myShipperIndex())
     throw new Forbidden(`Đơn ${id} không nằm trong chuyến của bạn`);
-  flowTo(o, "deliver");
-  const now = nowSeconds();
+  flowTo(o, "arrive");
   const note = trimmed(str(r, "note"));
   if (blen(note) > 150)
     throw new Invalid("Ghi chú tối đa 150 ký tự", { note: "Ghi chú tối đa 150 ký tự" });
-  const force = isStaff() && flag(r, "force");
-  if (force) {
-    if (blen(note) < 3)
-      throw new Invalid("Giao thay cần ghi rõ lý do", { note: "Ghi lý do giao thay" });
-  } else {
-    if (!S.limiter.allow("code:" + id, now, 6, 600))
-      throw new TooMany("Nhập sai mã quá nhiều lần, hãy thử lại sau ít phút", S.limiter.retryAfter("code:" + id, now, 600));
-    if (trimmed(str(r, "code")) !== o.deliveryCode || !o.deliveryCode)
-      throw new BadRequest("Mã xác nhận giao không đúng. Hãy hỏi người nhận mã 4 số hiển thị trong đơn của họ.");
-  }
   const collect = orderCollect(o, feeFor(o));
   if (collect > 0) {
     const cash = num(r, "cash", -1);
@@ -441,16 +462,147 @@ function deliverOrder(r) {
   }
   const atT = Math.max(S.shift.clock, o.eta);
   S.shift.advance(atT);
-  if (!S.shift.deliver(id, S.orders, atT))
-    throw new Conflict(`Không xác nhận giao được đơn ở trạng thái '${orderStatusName(o.status)}'`);
-  o.deliveredReal = now;
+  if (!S.shift.arrive(id, S.orders, atT))
+    throw new Conflict(`Không báo giao tới được đơn ở trạng thái '${orderStatusName(o.status)}'`);
+  o.arrivedReal = nowSeconds();
   if (note)
     o.proofNote = note;
-  onDelivered(o);
-  audit(force ? "order.deliver_force" : "order.deliver", String(id), collect ? "thu " + money(collect) : "");
+  if (collect > 0 && !o.codRecorded) {
+    S.cod.record(o.id, shipperNameOf(o.shipper), collect, nowSeconds());
+    o.codRecorded = true;
+    mark(D_COD);
+  }
+  if (o.shipper >= 0)
+    S.missStreak.set(shipperNameOf(o.shipper), 0);
+  logOrder("arrived", o, collect ? "thu " + money(collect) : "");
+  audit("order.arrive", String(id), collect ? "thu " + money(collect) : "");
+  const wait = CONFIG.autoConfirmMinutes;
+  notify(o.owner, "order", id, `Shipper ${shipperNameOf(o.shipper)} đã giao tới đơn #${id}. Nếu bạn / người nhận đã nhận được hàng, hãy bấm “Đã nhận hàng” để hoàn tất` + (wait > 0 ? ` (đơn tự hoàn tất sau ${wait} phút nếu không có phản hồi).` : "."));
+  mark(D_ORDERS);
   matchPending();
-  // shipper vừa giao xong đã rảnh
-  return { ...stateJson(), message: `Đã xác nhận giao đơn ${id}` + (collect ? ", ghi nhận đã thu " + money(collect) : "") };
+  return { ...stateJson(), message: `Đã báo giao tới đơn ${id}` + (collect ? ", ghi nhận đã thu " + money(collect) : "") + ". Đơn hoàn tất khi người nhận xác nhận “Đã nhận hàng”." };
+}
+// Bước 2: người nhận (khách đặt đơn) bấm "Đã nhận hàng". Quản trị viên xác nhận thay phải ghi lý do.
+function receiveOrder(r) {
+  const id = integer(r, "id");
+  const o = orderForActor(id);
+  flowTo(o, "receive");
+  const note = trimmed(str(r, "note"));
+  if (blen(note) > 150)
+    throw new Invalid("Ghi chú tối đa 150 ký tự", { note: "Ghi chú tối đa 150 ký tự" });
+  if (isStaff() && blen(note) < 3)
+    throw new Invalid("Xác nhận thay cần ghi rõ lý do", { note: "Ghi lý do xác nhận thay" });
+  const by = isStaff() ? "qt:" + S.me.username : "khach";
+  if (!completeReceipt(o, by, isStaff() ? "Quản trị viên xác nhận thay: " + note : ""))
+    throw new Conflict(`Không xác nhận được đơn ở trạng thái '${orderStatusName(o.status)}'`);
+  logOrder("received", o, isStaff() ? S.me.username + ": " + note : S.me.username);
+  audit(isStaff() ? "order.receive_force" : "order.receive", String(id), isStaff() ? note : "");
+  notify(accountOfShipper(shipperNameOf(o.shipper)), "order", id, `Đơn #${id} đã được người nhận xác nhận. Cảm ơn bạn!`);
+  return { ...stateJson(), message: `Đã xác nhận nhận hàng đơn ${id}` };
+}
+// Người nhận báo "Chưa nhận được hàng": đơn quay lại Đang giao. Mỗi đơn báo tối đa 2 lần.
+var MAX_DISPUTES = 2;
+function disputeOrder(r) {
+  const id = integer(r, "id");
+  const o = orderForActor(id);
+  flowTo(o, "dispute");
+  if (o.disputes >= MAX_DISPUTES)
+    throw new Conflict(`Đơn này đã được báo chưa nhận ${MAX_DISPUTES} lần. Hãy gửi khiếu nại để quản trị viên xử lý.`);
+  const reason = trimmed(str(r, "reason"));
+  if (blen(reason) > 150)
+    throw new Invalid("Lý do tối đa 150 ký tự", { reason: "Tối đa 150 ký tự" });
+  if (!S.shift.reopenDelivery(id, S.orders))
+    throw new Conflict(`Không thể báo chưa nhận hàng khi đơn ở trạng thái '${orderStatusName(o.status)}'`);
+  o.disputes++;
+  o.arrivedReal = 0;
+  logOrder("disputed", o, reason || S.me.username);
+  audit("order.dispute", String(id), reason);
+  notify(accountOfShipper(shipperNameOf(o.shipper)), "order", id, `Người nhận báo CHƯA nhận được đơn #${id}` + (reason ? ` (${reason})` : "") + ". Hãy liên hệ người nhận rồi bấm “Đã giao tới” lại.");
+  notifyStaff("order", id, `Người nhận báo chưa nhận được đơn #${id} dù shipper ${shipperNameOf(o.shipper)} đã bấm giao tới` + (o.codRecorded ? " (đơn đã ghi thu tiền mặt, hãy kiểm tra)" : "") + (reason ? ": " + reason : ""));
+  mark(D_ORDERS);
+  return { ...stateJson(), message: "Đã báo chưa nhận được hàng. Shipper sẽ liên hệ bạn." };
+}
+// Quản trị viên xác nhận giao thay khi người nhận / shipper không thao tác được (bắt buộc ghi lý do)
+function deliverOrder(r) {
+  const id = integer(r, "id");
+  const o = orderForActor(id);
+  flowTo(o, "deliver");
+  const note = trimmed(str(r, "note"));
+  if (blen(note) > 150)
+    throw new Invalid("Ghi chú tối đa 150 ký tự", { note: "Ghi chú tối đa 150 ký tự" });
+  if (blen(note) < 3)
+    throw new Invalid("Giao thay cần ghi rõ lý do", { note: "Ghi lý do giao thay" });
+  const collect = orderCollect(o, feeFor(o));
+  if (collect > 0 && o.status === ASSIGNED) {
+    const cash = num(r, "cash", -1);
+    if (cash !== collect)
+      throw new Invalid(`Hãy xác nhận đã thu đúng ${money(collect)}`, { cash: `Cần thu đủ ${money(collect)}` });
+  }
+  if (!completeReceipt(o, "qt:" + S.me.username, "Quản trị viên giao thay: " + note))
+    throw new Conflict(`Không xác nhận giao được đơn ở trạng thái '${orderStatusName(o.status)}'`);
+  logOrder("received", o, S.me.username + ": " + note);
+  audit("order.deliver_force", String(id), note);
+  return { ...stateJson(), message: `Đã xác nhận giao thay đơn ${id}` };
+}
+// Người nhận không có tài khoản: xác nhận / báo chưa nhận ngay trên trang tra cứu (mã đơn + SĐT người nhận)
+function trackConfirm(r) {
+  const now = nowSeconds();
+  if (!S.limiter.allow("trackc:" + S.ip, now, 12, 600))
+    throw new TooMany("Bạn thao tác quá nhiều lần, hãy thử lại sau ít phút", S.limiter.retryAfter("trackc:" + S.ip, now, 600));
+  const notFound = "Không tìm thấy đơn phù hợp. Hãy kiểm tra lại mã đơn và số điện thoại người nhận.";
+  const code = trimmed(str(r, "code"));
+  const phone = normalizePhone(str(r, "phone"));
+  const act = str(r, "action", "receive");
+  if (!code || code.length > 9 || !phone || !/^[0-9]+$/.test(code))
+    throw new BadRequest(notFound);
+  const o = findOrderById(parseInt(code, 10));
+  if (!o || !o.phone || o.phone !== phone)
+    throw new BadRequest(notFound);
+  if (act !== "receive" && act !== "dispute")
+    throw new BadRequest("Hành động không hợp lệ");
+  const out = { to: 0 };
+  const why = flowCheck(o.status, act, B_CUSTOMER, out);
+  if (why)
+    throw new Conflict(why);
+  if (act === "receive") {
+    if (!completeReceipt(o, "nguoi_nhan"))
+      throw new Conflict(`Không xác nhận được đơn ở trạng thái '${orderStatusName(o.status)}'`);
+    logOrder("received", o, "người nhận (tra cứu công khai)");
+    systemAudit("order.receive_public", String(o.id), "người nhận xác nhận qua trang tra cứu");
+    notify(accountOfShipper(shipperNameOf(o.shipper)), "order", o.id, `Đơn #${o.id} đã được người nhận xác nhận. Cảm ơn bạn!`);
+    return { ok: true, message: `Cảm ơn bạn! Đơn #${o.id} đã hoàn tất.` };
+  }
+  if (o.disputes >= MAX_DISPUTES)
+    throw new Conflict(`Đơn này đã được báo chưa nhận ${MAX_DISPUTES} lần. Hãy liên hệ người gửi hoặc quản trị viên.`);
+  if (!S.shift.reopenDelivery(o.id, S.orders))
+    throw new Conflict("Không thể báo chưa nhận hàng lúc này");
+  o.disputes++;
+  o.arrivedReal = 0;
+  logOrder("disputed", o, "người nhận (tra cứu công khai)");
+  systemAudit("order.dispute_public", String(o.id), "người nhận báo chưa nhận được hàng");
+  notify(accountOfShipper(shipperNameOf(o.shipper)), "order", o.id, `Người nhận báo CHƯA nhận được đơn #${o.id}. Hãy liên hệ người nhận rồi bấm “Đã giao tới” lại.`);
+  notify(o.owner, "order", o.id, `Người nhận báo chưa nhận được đơn #${o.id}, shipper sẽ liên hệ lại.`);
+  notifyStaff("order", o.id, `Người nhận báo chưa nhận được đơn #${o.id} dù shipper đã bấm giao tới`);
+  mark(D_ORDERS);
+  return { ok: true, message: "Đã ghi nhận chưa nhận được hàng. Shipper sẽ liên hệ bạn." };
+}
+// Người nhận không phản hồi quá autoConfirmMinutes phút kể từ lúc shipper giao tới thì đơn tự hoàn tất
+function autoCompleteArrived() {
+  const wait = CONFIG.autoConfirmMinutes;
+  if (wait <= 0)
+    return;
+  const now = nowSeconds();
+  const due = S.orders.filter((o) => o.status === ARRIVED && o.arrivedReal > 0 && now - o.arrivedReal >= wait * 60).map((o) => o.id);
+  for (const id of due) {
+    const o = findOrderById(id);
+    if (!o || o.status !== ARRIVED)
+      continue;
+    if (!completeReceipt(o, "tu_dong", `Tự hoàn tất: người nhận không phản hồi sau ${wait} phút`))
+      continue;
+    logOrder("auto_received", o, `${wait} phút`);
+    systemAudit("order.autoreceive", String(id), `người nhận không phản hồi sau ${wait} phút`);
+    notify(o.owner, "order", id, `Đơn #${id} đã tự hoàn tất vì không có phản hồi sau ${wait} phút kể từ lúc shipper giao tới. Nếu chưa nhận được hàng, hãy gửi khiếu nại.`);
+  }
 }
 // Phí hoàn hàng (cùng công thức với summarize): tỉ lệ hoàn × phần cước không gồm phí thu hộ, làm tròn lên 500 đ
 function chargeReturn(o) {
@@ -496,7 +648,7 @@ function requeueOrder(r) {
     throw new Conflict(why);
   const phone = normalizePhone(str(r, "phone"));
   if (phone && !validPhone(phone))
-    throw new Invalid("Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0", { phone: "10 chữ số, bắt đầu bằng 0" });
+    throw new Invalid("Số điện thoại phải bắt đầu bằng số 0 và gồm 10–11 chữ số", { phone: "Bắt đầu bằng 0, 10–11 chữ số" });
   const note = trimmed(str(r, "note")).replace(/[#\n\r]/g, "-");
   if (blen(note) > 200)
     throw new Invalid("Ghi chú tối đa 200 ký tự", { note: "Ghi chú tối đa 200 ký tự" });
@@ -511,6 +663,7 @@ function requeueOrder(r) {
   // lần giao lại: ai cũng được mời
   o.noShipperAt = 0;
   o.searchSince = nowSeconds();
+  o.opened = false;
   mark(D_ORDERS);
   audit("order.requeue", String(o.id), phone ? "SĐT mới " + phone : "");
   if (isCustomer() && !CONFIG.autoMatch)
@@ -562,7 +715,7 @@ function timelineJson(o) {
   if (o.createdAt > 0)
     arr.push({ type: "created", at: o.createdAt, t: null, who: o.createdBy, detail: "" });
   // Khách không thấy việc hệ thống mời / bị từ chối / bỏ lỡ từng shipper (như app Grab chỉ báo "đang tìm tài xế")
-  const hiddenFromCustomer = ["offered", "declined", "expired", "offer_withdrawn", "recalled", "released", "assigned"];
+  const hiddenFromCustomer = ["offered", "declined", "expired", "offer_withdrawn", "recalled", "released", "assigned", "opened"];
   for (const e of S.shift.events)
     if (e.order === o.id && !(o.createdAt > 0 && e.type === "created") && !(isCustomer() && hiddenFromCustomer.includes(e.type)))
       arr.push({ type: e.type, at: null, t: e.t, who: e.shipper >= 0 ? shipperNameOf(e.shipper) : null, detail: e.detail });
@@ -626,7 +779,7 @@ function orderDetailJson(o, index) {
   if (rv)
     j.review = { stars: rv.stars, comment: rv.comment };
   // Khách xem được SĐT shipper khi đơn đang trên đường
-  if (isCustomer() && o.status === ASSIGNED && o.shipper >= 0) {
+  if (isCustomer() && (o.status === ASSIGNED || o.status === ARRIVED) && o.shipper >= 0) {
     const a = S.accounts.find(accountOfShipper(shipperNameOf(o.shipper)));
     j.carrierPhone = a ? a.phone : "";
   }
@@ -716,13 +869,14 @@ function trackOrder(r) {
   for (const e of S.shift.events)
     if (e.order === o.id && e.type !== "created")
       steps.push({ type: e.type, t: e.t });
-  const ship = carrier.get(o.id) || "";
+  const ship = o.status !== DISPATCHED ? carrier.get(o.id) || "" : "";
   const first = ship ? ship.slice(ship.lastIndexOf(" ") + 1) : "";
-  return {
-    ok: true,
-    order: { id: o.id, status: o.status, statusName: orderStatusName(o.status), destination: nodeName(o.destination), urgent: o.urgent, carrier: first || null, cod: o.cod, collect: orderCollect(o, feeFor(o)), deliveredReal: o.deliveredReal },
-    steps
-  };
+  const ord = { id: o.id, status: o.status, statusName: orderStatusName(o.status), destination: nodeName(o.destination), urgent: o.urgent, carrier: first || null, cod: o.cod, collect: orderCollect(o, feeFor(o)), deliveredReal: o.deliveredReal, arrivedReal: o.arrivedReal, disputes: o.disputes };
+  const wait = CONFIG.autoConfirmMinutes;
+  ord.canConfirm = o.status === ARRIVED;
+  ord.canDispute = o.status === ARRIVED && o.disputes < MAX_DISPUTES;
+  ord.autoConfirmAt = o.status === ARRIVED && o.arrivedReal > 0 && wait > 0 ? o.arrivedReal + wait * 60 : null;
+  return { ok: true, order: ord, steps };
 }
 function publicInfo() {
   const bad = unreachableSet();
@@ -950,10 +1104,10 @@ function dispatchAssign(r) {
   audit("dispatch.assign", name, `${n} đơn`);
   return { ...stateJson(), assigned: n, left, message: `Đã phân công ${n} đơn cho ${name}` + (left ? `. ${left} đơn không xếp được (quá tải trọng / xe không tới được), vẫn ở hàng chờ` : "") };
 }
-// ------------------------------------------------------------ Ghép đơn tự động (kiểu Grab)
-// Đơn Chờ giao được mời cho shipper GẦN NHẤT: gần = thời gian chạy ngắn nhất từ chỗ shipper đang đứng tới kho lấy hàng
-// (Dijkstra theo thời gian, đúng loại xe, có tính giờ cao điểm). Shipper có số giây (offerSeconds) để nhận;
-// từ chối hoặc hết hạn thì mời người gần nhất kế tiếp, hết người thì báo khách để khách thử lại hoặc huỷ.
+// ------------------------------------------------------------ Đơn chờ nhận: ai bấm nhận trước thì giao đơn đó
+// Đơn mới (hoặc đơn quay về hàng chờ) hiện trên bảng "Đơn chờ nhận" của MỌI shipper đang sẵn sàng (trừ shipper bị khách chặn).
+// Shipper nào bấm "Nhận đơn" trước thì được giao: mỗi yêu cầu chạy trọn vẹn một lần nên chỉ một người nhận được,
+// người bấm sau nhận lỗi 409 "đơn đã có shipper khác nhận". Mỗi shipper chỉ giữ một chuyến tại một thời điểm.
 // Lộ trình của chuyến vẫn do phương án "deadline" của Dispatcher lập (xuất phát từ kho, không quay về).
 function systemAudit(action, target, detail = "") {
   S.audit.add("hệ thống", "system", action, target, detail, nowSeconds());
@@ -964,7 +1118,16 @@ function markTried(o, si) {
   if (si >= 0 && !alreadyTried(o, si))
     o.tried = [...o.tried, si];
 }
-var shipperEligible = (si) => !S.shift.isAbsent(si) && shipperReady(si);
+// Khách đã chặn shipper này (không bao giờ ghép lại)
+var blockedFor = (o, si) => !!o.owner && S.prefs.isBlocked(o.owner, shipperNameOf(si));
+// Shipper đang giữ quá nhiều tiền mặt thu hộ: không mời đơn phải thu tiền cho tới khi nộp bớt
+function codOverLimit(o, si) {
+  const limit = CONFIG.codHoldLimit;
+  if (limit <= 0)
+    return false;
+  const collect = orderCollect(o, feeFor(o));
+  return collect > 0 && S.cod.held(shipperNameOf(si)) + collect > limit;
+}
 // Đường nhanh nhất từ nơi shipper đứng tới kho
 function approachOf(from, v) {
   const a = { ok: false, path: [], times: [], minutes: 0, km: 0 };
@@ -994,40 +1157,28 @@ function approachOf(from, v) {
   a.ok = true;
   return a;
 }
-// Shipper có thể được mời cho đơn này: sẵn sàng, không nghỉ, rảnh, chở nổi, chưa từ chối / bỏ lỡ đơn này.
-// Xếp theo: (điểm hiệu suất nếu bật) -> thời gian tới kho -> km -> điểm -> thứ tự trong đội xe.
-function matchCandidates(o) {
-  const out = [];
-  S.shippers.forEach((sh, si) => {
-    if (!shipperEligible(si) || alreadyTried(o, si))
-      return;
-    if (o.weight > sh.capacity)
-      return;
-    if (S.shift.busy(si, S.orders))
-      return;
-    const ap = approachOf(shipperNode(si), sh.vehicle);
-    if (!ap.ok)
-      return;
-    out.push({ shipper: si, ap, score: shipperScore(sh.name) });
-  });
-  const byScore = CONFIG.scoreAware;
-  out.sort((a, b) => {
-    if (byScore && a.score !== b.score)
-      return a.score > b.score ? -1 : 1;
-    if (Math.abs(a.ap.minutes - b.ap.minutes) > 0.000000001)
-      return a.ap.minutes < b.ap.minutes ? -1 : 1;
-    if (Math.abs(a.ap.km - b.ap.km) > 0.000000001)
-      return a.ap.km < b.ap.km ? -1 : 1;
-    if (a.score !== b.score)
-      return a.score > b.score ? -1 : 1;
-    return a.shipper - b.shipper;
-  });
-  return out;
+// Shipper này có nhận được đơn không? Rỗng = được; ngược lại là lý do.
+function claimBlock(o, si, busyCheck = true) {
+  if (S.shift.isAbsent(si))
+    return "Bạn đang được ghi nhận nghỉ đột xuất";
+  if (!shipperReady(si))
+    return "Bạn đang tạm nghỉ. Hãy bật “Sẵn sàng” để nhận đơn";
+  if (alreadyTried(o, si))
+    return "Bạn đã nhả đơn này";
+  if (codOverLimit(o, si))
+    return "Bạn đang giữ quá nhiều tiền mặt thu hộ. Hãy nộp bớt rồi nhận đơn thu tiền";
+  if (o.weight > S.shippers[si].capacity)
+    return `Đơn nặng hơn tải trọng xe của bạn (${Math.trunc(S.shippers[si].capacity)} kg)`;
+  if (busyCheck && S.shift.busy(si, S.orders))
+    return "Hãy giao xong đơn đang cầm trước khi nhận đơn mới";
+  return "";
 }
-// Còn shipper nào (kể cả đang bận) có thể được mời cho đơn này không?
-var anyoneLeft = (o) => S.shippers.some((sh, si) => shipperEligible(si) && !alreadyTried(o, si) && o.weight <= sh.capacity);
-// Lập chuyến một đơn cho shipper và gửi lời mời. false nếu shipper này không giao nổi đơn (xe không tới được...).
-function offerTo(o, c) {
+// Đơn đang mở cho shipper nhận?
+var openForClaim = (o) => CONFIG.autoMatch && S.graph.hasNode(S.depot) && o.status === PENDING && (o.createdAt > 0 || o.searchSince > 0);
+// Còn shipper nào (kể cả đang bận) có thể nhận đơn này không?
+var anyoneLeft = (o) => S.shippers.some((sh, si) => !blockedFor(o, si) && claimBlock(o, si, false) === "");
+// Lập chuyến một đơn cho shipper c.shipper. false nếu xe của họ không giao nổi đơn.
+function buildClaimTrip(o, c) {
   const pend = { orders: [{ ...o }], idx: [S.orders.indexOf(o)] };
   const clock = S.shift.clock;
   const rep = runDispatch(pend, S.shippers[c.shipper].vehicle, false, c.shipper, clock + c.ap.minutes);
@@ -1044,17 +1195,13 @@ function offerTo(o, c) {
   if (S.shift.apply(chosen, pend.idx, S.orders, S.shippers, true, true) === 0)
     return false;
   const t = S.shift.trips[S.shift.trips.length - 1];
-  t.offerUntil = nowSeconds() + CONFIG.offerSeconds;
+  t.offerUntil = 0;
   t.offerClock = clock;
   t.fromNode = c.ap.path[0];
   t.approach = c.ap.path;
   t.approachTimes = c.ap.times;
-  const mins = Math.round(c.ap.minutes);
-  t.note = `Ghép tự động: shipper gần nhất (${mins} phút tới kho)`;
+  t.note = `Nhận từ bảng đơn chờ (${Math.round(c.ap.minutes)} phút tới kho)`;
   o.noShipperAt = 0;
-  const name = S.shippers[c.shipper].name;
-  S.shift.log(clock, "offered", o.id, c.shipper, `${mins} phút tới kho`);
-  notify(accountOfShipper(name), "trip", o.id, `Đơn mới #${o.id} gần bạn: lấy ở kho (${mins} phút) rồi giao tới ${nodeName(o.destination)}. Hãy nhận trong ${CONFIG.offerSeconds} giây`);
   mark(D_ORDERS);
   return true;
 }
@@ -1066,23 +1213,11 @@ function notifyNoShipper(o) {
   notify(o.owner, "order", o.id, `Chưa có shipper nhận đơn #${o.id}. Bạn có thể bấm “Tìm lại” hoặc huỷ đơn.`);
   mark(D_ORDERS);
 }
-// Mời đơn cho shipper gần nhất còn phù hợp. true nếu đã gửi được lời mời.
-function matchOne(o) {
-  for (const c of matchCandidates(o)) {
-    if (offerTo(o, c))
-      return true;
-    markTried(o, c.shipper);
-  }
-  if (!anyoneLeft(o))
-    notifyNoShipper(o);
-  return false;
-}
-// Ghép mọi đơn Chờ giao (đơn gấp, hạn sớm trước). Trả về số lời mời mới.
+// Báo đơn mới cho các shipper có thể nhận (mỗi lần đơn mở ra báo một lần). Không còn shipper nào nhận được thì báo khách.
 function matchPending() {
   if (!CONFIG.autoMatch || !S.graph.hasNode(S.depot))
     return 0;
-  // đơn nhập từ file (chưa có giờ đặt) chờ quản trị viên phân công hoặc bấm “Tìm shipper”
-  const ids = S.orders.filter((o) => o.status === PENDING && (o.createdAt > 0 || o.searchSince > 0)).map((o) => o.id);
+  const ids = S.orders.filter(openForClaim).map((o) => o.id);
   if (!ids.length)
     return 0;
   ids.sort((a, b) => {
@@ -1092,8 +1227,23 @@ function matchPending() {
   let n = 0;
   for (const id of ids) {
     const o = findOrderById(id);
-    if (o && o.status === PENDING && matchOne(o))
-      ++n;
+    if (!o || o.status !== PENDING)
+      continue;
+    if (!anyoneLeft(o)) {
+      notifyNoShipper(o);
+      continue;
+    }
+    if (o.opened)
+      continue;
+    o.opened = true;
+    o.noShipperAt = 0;
+    S.shift.log(S.shift.clock, "opened", o.id, -1, "");
+    S.shippers.forEach((sh, si) => {
+      if (blockedFor(o, si) || claimBlock(o, si, false) !== "")
+        return;
+      notify(accountOfShipper(sh.name), "trip", o.id, `Có đơn mới #${o.id}${o.category ? ` (${categoryName(o.category)})` : ""}${o.urgent ? " HOẢ TỐC" : ""} giao tới ${nodeName(o.destination)}. Mở “Đơn chờ nhận” và bấm Nhận đơn: ai nhận trước thì giao.`);
+    });
+    ++n;
   }
   return n;
 }
@@ -1108,6 +1258,7 @@ function withdrawOffers(si, why) {
       const o = findOrderById(oid);
       if (o) {
         o.searchSince = nowSeconds();
+        o.opened = false;
         logOrder("offer_withdrawn", o, why);
       }
     }
@@ -1115,25 +1266,28 @@ function withdrawOffers(si, why) {
   if (ids.length)
     mark(D_ORDERS);
 }
-// Lời mời quá hạn: coi như shipper bỏ lỡ, mời người kế tiếp
-function expireOffer(tripId) {
-  const t = S.shift.findTrip(tripId);
-  if (!t)
+// Nhả đơn đã nhận liên tiếp quá missLimit lần (không giao tới nơi đơn nào giữa các lần) thì shipper tự chuyển sang Tạm nghỉ
+function noteMiss(si) {
+  const name = shipperNameOf(si);
+  if (!name)
     return;
-  const si = t.shipper;
-  const name = t.shipperName;
-  const orders = t.stops.map((st) => st.orderId);
-  S.shift.decline(tripId, S.orders, "Hết thời gian trả lời");
-  for (const oid of orders) {
-    const o = findOrderById(oid);
-    if (o) {
-      markTried(o, si);
-      logOrder("expired", o, name);
-      systemAudit("offer.expire", String(oid), name);
-    }
-  }
-  notify(accountOfShipper(name), "trip", 0, `Bạn đã bỏ lỡ lời mời #${tripId} vì hết thời gian trả lời`);
-  mark(D_ORDERS);
+  const limit = CONFIG.missLimit;
+  const n = (S.missStreak.get(name) || 0) + 1;
+  S.missStreak.set(name, n);
+  if (limit <= 0 || n < limit)
+    return;
+  S.missStreak.set(name, 0);
+  const acc = accountOfShipper(name);
+  const a = acc ? S.accounts.find(acc) : null;
+  if (!a || !a.ready)
+    return;
+  S.accounts.setReady(acc, false);
+  mark(D_USERS);
+  if (S.authed && S.me.username === acc)
+    S.me = { ...S.accounts.find(acc) };
+  withdrawOffers(si, "Shipper tự chuyển sang tạm nghỉ");
+  systemAudit("shipper.autopause", acc, `${limit} lần nhả đơn liên tiếp`);
+  notify(acc, "account", 0, `Bạn đã nhả đơn ${limit} lần liên tiếp nên được chuyển sang Tạm nghỉ để đơn tới khách nhanh hơn. Bật lại “Sẵn sàng” khi bạn muốn nhận đơn.`);
 }
 // Chờ quá lâu mà không ai nhận: hệ thống tự huỷ đơn (miễn phí) và báo khách
 function giveUpOrder(o) {
@@ -1167,7 +1321,7 @@ function runClockTo(t) {
     matchPending();
   return n;
 }
-// Chạy mỗi yêu cầu (trong handle): đồng hồ ca nhích theo giờ thật, lời mời quá hạn, đơn chờ quá lâu, ghép đơn (tối đa 1 lần / 2 giây)
+// Chạy mỗi yêu cầu (trong handle): đồng hồ ca nhích theo giờ thật, đơn chờ xác nhận quá hạn tự hoàn tất, đơn chờ quá lâu, báo đơn mới (tối đa 1 lần / 2 giây)
 function liveTick() {
   const now = nowSeconds();
   const cfg = CONFIG;
@@ -1177,9 +1331,7 @@ function liveTick() {
   S.lastTick = now;
   if (cfg.clockSpeed > 0 && dt > 0 && S.shift.active())
     runClockTo(S.shift.clock + dt * cfg.clockSpeed / 60);
-  const expired = S.shift.trips.filter((t) => !t.accepted && t.offerUntil > 0 && now >= t.offerUntil).map((t) => t.id);
-  for (const id of expired)
-    expireOffer(id);
+  autoCompleteArrived();
   if (cfg.matchGiveUp > 0) {
     const stale = S.orders.filter((o) => o.status === PENDING && o.searchSince > 0 && now - o.searchSince >= cfg.matchGiveUp * 60).map((o) => o.id);
     for (const id of stale) {
@@ -1188,12 +1340,12 @@ function liveTick() {
         giveUpOrder(o);
     }
   }
-  if (expired.length || now - S.lastMatch >= 2) {
+  if (now - S.lastMatch >= 2) {
     S.lastMatch = now;
     matchPending();
   }
 }
-// Khách bấm “Tìm lại”: xoá danh sách đã từ chối, mời lại từ đầu
+// Khách bấm “Tìm lại”: xoá danh sách shipper đã nhả đơn, báo lại cho mọi shipper
 function retryOrder(r) {
   const o = orderForActor(integer(r, "id"));
   if (o.status !== PENDING)
@@ -1201,14 +1353,14 @@ function retryOrder(r) {
   o.tried = [];
   o.noShipperAt = 0;
   o.searchSince = nowSeconds();
+  o.opened = false;
   logOrder("retry", o, S.me.username);
   mark(D_ORDERS);
   audit("order.retry", String(o.id));
   const offers = matchPending();
-  const cur = findOrderById(o.id);
-  return { ...stateJson(), message: cur.status === DISPATCHED ? `Đã gửi đơn ${o.id} cho shipper gần nhất` : offers ? `Đang tìm shipper cho đơn ${o.id}` : `Chưa có shipper rảnh, hệ thống sẽ tiếp tục tìm cho đơn ${o.id}` };
+  return { ...stateJson(), message: offers ? `Đã báo đơn ${o.id} cho các shipper đang sẵn sàng: ai nhận trước sẽ giao` : `Chưa có shipper nào nhận được, đơn ${o.id} vẫn nằm trên bảng đơn chờ nhận` };
 }
-// Shipper nhả đơn đã nhận khi chưa lấy hàng (như tài xế Grab huỷ chuyến): đơn quay lại hàng chờ và được mời cho người khác
+// Shipper nhả đơn đã nhận khi chưa lấy hàng (như tài xế Grab huỷ chuyến): đơn quay lại bảng đơn chờ nhận cho shipper khác
 function releaseOrder(r) {
   const id = integer(r, "id");
   const o = orderForActor(id);
@@ -1231,37 +1383,172 @@ function releaseOrder(r) {
   markTried(o, ship);
   o.noShipperAt = 0;
   o.searchSince = nowSeconds();
+  o.opened = false;
   ++S.stats.at(S.me.link).declines;
+  noteMiss(ship);
   mark(D_STATS | D_ORDERS);
   logOrder("released", o, reason);
   audit("order.release", String(id), reason);
-  notify(o.owner, "order", id, `Shipper ${S.me.link} không thể giao đơn #${id}, hệ thống đang tìm shipper khác cho bạn`);
+  notify(o.owner, "order", id, `Shipper ${S.me.link} không thể giao đơn #${id}, đơn đã được mở lại cho các shipper khác nhận`);
   notifyStaff("order", id, `${S.me.link} nhả đơn #${id}: ${reason}`);
   matchPending();
-  return { ...stateJson(), message: `Đã nhả đơn ${id}, hệ thống sẽ tìm shipper khác` };
+  return { ...stateJson(), message: `Đã nhả đơn ${id}, đơn quay lại bảng đơn chờ nhận cho shipper khác` };
 }
-// Shipper đánh giá khách sau khi giao xong (đánh giá hai chiều)
-function rateCustomer(r) {
+// ------------------------------------------------------------ Nghiệp vụ kiểu Grab: tiền tip, trò chuyện, shipper yêu thích / bị chặn
+function tipOrder(r) {
   const o = orderForActor(integer(r, "id"));
-  if (o.shipper !== myShipperIndex())
-    throw new Forbidden(`Đơn ${o.id} không do bạn giao`);
+  if (o.owner !== S.me.username)
+    throw new Forbidden(`Đơn ${o.id} không thuộc quyền xem của bạn`);
+  const cfg = CONFIG;
+  if (cfg.tipMax <= 0)
+    throw new Conflict("Tính năng tip đang tắt");
   if (o.status !== DELIVERED)
-    throw new Conflict("Chỉ đánh giá được khách của đơn đã giao");
-  const stars = integer(r, "stars", 0);
-  if (stars < 1 || stars > 5)
-    throw new Invalid("Hãy chọn từ 1 đến 5 sao", { stars: "Chọn từ 1 đến 5 sao" });
-  if (!o.owner)
-    throw new Conflict("Đơn này không gắn với tài khoản khách hàng");
-  if (S.custReviews.ofOrder(o.id))
-    throw new Conflict("Bạn đã đánh giá khách của đơn này");
-  const rv = { order: o.id, customer: o.owner, shipper: S.me.link, stars, comment: trimmed(str(r, "comment")), at: nowSeconds() };
-  const e = S.custReviews.add(rv);
+    throw new Conflict("Chỉ tip được cho đơn đã giao thành công");
+  const ship = shipperNameOf(o.shipper);
+  if (!ship)
+    throw new Conflict("Đơn này không có shipper để nhận tip");
+  if (S.ledger.tipOf(o.id))
+    throw new Conflict("Bạn đã tip cho đơn này rồi");
+  const now = nowSeconds();
+  if (o.deliveredReal > 0 && now - o.deliveredReal > TIP_WINDOW)
+    throw new Conflict("Chỉ tip được trong 7 ngày sau khi giao");
+  const amount = num(r, "amount", 0);
+  if (Math.floor(amount) !== amount || amount < 1000 || amount > cfg.tipMax || amount % 1000 !== 0)
+    throw new Invalid(`Tiền tip từ 1.000 đ đến ${money(cfg.tipMax)}, bội số 1.000 đ`, { amount: `Từ 1.000 đ đến ${money(cfg.tipMax)}` });
+  const tip = amount;
+  if (cfg.debtLimit > 0) {
+    const after = statementOf(o.owner, orderFees()).balance - tip;
+    if (-after > cfg.debtLimit)
+      throw new Conflict(`Ví của bạn không đủ để tip ${money(tip)}: số dư sau khi tip là ${money(after)}, vượt hạn mức nợ ${money(cfg.debtLimit)}.`);
+  }
+  const note = trimmed(str(r, "note"));
+  if (blen(note) > 300)
+    throw new Invalid("Lời nhắn tối đa 100 ký tự", { note: "Tối đa 100 ký tự" });
+  const tx = { kind: "tip", customer: o.owner, amount: tip, at: now, by: S.me.username, order: o.id, complaint: 0, method: "", ref: ship, note };
+  const res = S.ledger.add(tx);
+  if (res.error)
+    throw new BadRequest(res.error);
+  mark(D_LEDGER | D_ORDERS);
+  audit("order.tip", String(o.id), `${money(tip)} cho ${ship}`);
+  const saved = S.ledger.tipOf(o.id);
+  notify(accountOfShipper(ship), "order", o.id, `Khách ${S.me.displayName} tip ${money(tip)} cho đơn #${o.id}${saved.note ? `: “${saved.note}”` : ""}`);
+  return { ...stateJson(), message: `Đã tip ${money(tip)} cho ${ship}. Cảm ơn bạn!` };
+}
+function chatOrder(id) {
+  const o = orderForActor(id);
+  if (isShipper() && o.shipper !== myShipperIndex())
+    throw new Forbidden(`Đơn ${id} không do bạn giao`);
+  if (isCustomer() && o.owner !== S.me.username)
+    throw new Forbidden(`Đơn ${id} không thuộc quyền xem của bạn`);
+  return o;
+}
+function chatJson(o) {
+  const messages = S.chat.of(o.id).map((m) => {
+    let who;
+    if (m.role === "A")
+      who = "Tổng đài";
+    else if (m.role === "S") {
+      const a = S.accounts.find(m.from);
+      who = a ? (a.link ? a.link : a.displayName) : "Shipper";
+    } else
+      who = ownerDisplay(m.from);
+    return { id: m.id, at: m.at, role: m.role, who, mine: m.from === S.me.username, text: m.text };
+  });
+  const quick = isCustomer() ? ["Bạn tới chưa ạ?", "Mình đang xuống ngay", "Gọi mình khi tới nhé", "Để hàng ở bảo vệ giúp mình", "Cảm ơn bạn!"]
+    : isShipper() ? ["Mình đã lấy hàng, đang tới", "Mình tới rồi, bạn ra nhận giúp", "Đường kẹt, mình tới trễ vài phút", "Mình không gọi được bạn", "Cảm ơn bạn!"] : [];
+  return { ok: true, order: o.id, open: chatOpen(o), messages, quick, shipper: o.shipper >= 0 ? shipperNameOf(o.shipper) : null, customer: o.owner ? ownerDisplay(o.owner) : null };
+}
+function chatSend(r) {
+  const o = chatOrder(integer(r, "id"));
+  if (!chatOpen(o)) {
+    if (!o.owner)
+      throw new Conflict("Đơn do quản trị viên tạo, không có tài khoản khách để nhắn tin");
+    throw new Conflict(o.status === DELIVERED || o.status === RETURNED || o.status === CANCELLED ? "Đơn đã kết thúc, cuộc trò chuyện chỉ còn để xem" : "Chỉ nhắn tin được khi shipper đã nhận đơn");
+  }
+  const now = nowSeconds();
+  if (!S.limiter.allow("chat:" + S.me.username, now, 20, 60))
+    throw new TooMany("Bạn gửi tin quá nhanh, hãy đợi một chút", S.limiter.retryAfter("chat:" + S.me.username, now, 60));
+  const role = isCustomer() ? "C" : isShipper() ? "S" : "A";
+  const res = S.chat.add({ order: o.id, at: now, from: S.me.username, role, text: str(r, "text") });
+  if (res.error)
+    throw new Invalid(res.error, { text: res.error });
+  mark(D_CHAT);
+  const shipAcc = accountOfShipper(shipperNameOf(o.shipper));
+  const msgs = S.chat.of(o.id);
+  const preview = utf8Prefix(msgs[msgs.length - 1].text, 60);
+  if (role !== "C")
+    notify(o.owner, "chat", o.id, `${role === "S" ? S.me.link : "Tổng đài"} nhắn về đơn #${o.id}: ${preview}`);
+  if (role !== "S")
+    notify(shipAcc, "chat", o.id, `${role === "C" ? S.me.displayName : "Tổng đài"} nhắn về đơn #${o.id}: ${preview}`);
+  return { ...chatJson(o), message: "Đã gửi" };
+}
+function shippersServed(customer) {
+  const out = [];
+  for (const o of S.orders) {
+    if (o.owner !== customer || o.shipper < 0)
+      continue;
+    if (o.status !== ASSIGNED && o.status !== ARRIVED && o.status !== DELIVERED && o.status !== FAILED && o.status !== RETURNED)
+      continue;
+    const nm = shipperNameOf(o.shipper);
+    if (nm && !out.includes(nm))
+      out.push(nm);
+  }
+  return out;
+}
+function prefsJson() {
+  const me = S.me.username;
+  const row = (nm) => {
+    const idx = shipperIndexByName(nm);
+    const { avg, count } = S.reviews.average(nm);
+    return { name: nm, inFleet: idx >= 0, vehicle: idx >= 0 ? vehicleName(S.shippers[idx].vehicle) : null, rating: count ? avg : null, ratings: count, favorite: S.prefs.isFavorite(me, nm), blocked: S.prefs.isBlocked(me, nm) };
+  };
+  return { ok: true, favorites: S.prefs.favorites(me).map(row), blocked: S.prefs.blocked(me).map(row), served: shippersServed(me).map(row), max: MAX_PREFS };
+}
+function applyPref(r) {
+  const me = S.me.username;
+  const name = trimmed(str(r, "shipper"));
+  const action = str(r, "action");
+  if (!name)
+    throw new Invalid("Hãy chọn shipper", { shipper: "Chọn shipper" });
+  if ((action === "block" || action === "fav") && !shippersServed(me).includes(name))
+    throw new Forbidden("Bạn chỉ chọn được shipper đã từng nhận đơn của mình");
+  const e = S.prefs.apply(me, name, action);
   if (e)
-    throw new BadRequest(e);
-  mark(D_CREVIEWS);
-  audit("order.rate_customer", String(o.id), `${stars} sao`);
-  notify(o.owner, "order", o.id, `Shipper ${S.me.link} đánh giá bạn ${stars} sao cho đơn #${o.id}`);
-  return { ...stateJson(), message: "Cảm ơn bạn đã đánh giá khách hàng" };
+    throw new Conflict(e);
+  mark(D_PREFS);
+  audit("customer.shipper_pref", name, action);
+  let withdrawn = 0;
+  if (action === "block") {
+    const si = shipperIndexByName(name);
+    const trips = [];
+    for (const t of S.shift.trips) {
+      if (t.shipper !== si || t.accepted)
+        continue;
+      if (t.stops.some((st) => { const o = findOrderById(st.orderId); return o && o.owner === me; }))
+        trips.push(t.id);
+    }
+    for (const tid of trips) {
+      const t = S.shift.findTrip(tid);
+      const ids = t.stops.map((st) => st.orderId);
+      S.shift.decline(tid, S.orders, "Khách đã chặn shipper");
+      for (const oid of ids) {
+        const o = findOrderById(oid);
+        if (o) {
+          markTried(o, si);
+          o.searchSince = nowSeconds();
+          o.opened = false;
+          logOrder("offer_withdrawn", o, "Khách đã chặn shipper");
+          ++withdrawn;
+        }
+      }
+    }
+    if (withdrawn) {
+      mark(D_ORDERS);
+      matchPending();
+    }
+  }
+  const msg = { block: "Đã chặn ", unblock: "Đã bỏ chặn ", fav: "Đã thêm vào yêu thích: ", unfav: "Đã bỏ yêu thích: " };
+  return { ...prefsJson(), message: msg[action] + name + (withdrawn ? ". Lời mời đang chờ của shipper này đã được chuyển cho người khác" : "") };
 }
 // Quản trị viên thu hồi chuyến / lời mời shipper chưa nhận (shipper không phản hồi): đơn về Chờ giao, không tính là shipper từ chối
 function recallTrip(r) {
@@ -1284,6 +1571,7 @@ function recallTrip(r) {
     const o = findOrderById(oid);
     if (o) {
       o.searchSince = nowSeconds();
+      o.opened = false;
       logOrder("recalled", o, reason);
     }
   }
@@ -1292,14 +1580,14 @@ function recallTrip(r) {
   matchPending();
   return { ...stateJson(), message: `Đã thu hồi chuyến ${id} của ${ship}: ${n} đơn trở về hàng chờ` };
 }
-function acceptTrip(r) {
-  const id = integer(r, "id");
+// Nhận chuyến (chuyến do quản trị viên phân công tay, hoặc chuyến vừa lập khi shipper bấm Nhận đơn)
+function acceptTripId(id, claimed) {
   const t = S.shift.findTrip(id);
   if (!t)
-    throw new BadRequest(`Không có chuyến ${id} (lời mời có thể đã hết hạn hoặc bị thu hồi)`);
+    throw new BadRequest(`Không có chuyến ${id} (chuyến có thể đã bị thu hồi)`);
   if (t.shipper !== myShipperIndex())
     throw new Forbidden("Chuyến này không phải của bạn");
-  const ids = t.stops.map((s) => s.orderId);
+  const ids = t.stops.map((s2) => s2.orderId);
   const autoTrip = t.fromNode >= 0;
   const n = S.shift.accept(id, S.orders);
   if (n < 0)
@@ -1309,13 +1597,95 @@ function acceptTrip(r) {
   for (const oid of ids) {
     const o = findOrderById(oid);
     if (o) {
-      logOrder("accepted", o, S.me.link);
+      logOrder(claimed ? "claimed" : "accepted", o, S.me.link);
       o.noShipperAt = 0;
       notify(o.owner, "order", oid, autoTrip ? `${S.me.link} đã nhận đơn #${oid} và đang tới kho lấy hàng` : `Đơn #${oid} đang được ${S.me.link} giao tới bạn`);
     }
   }
-  audit("trip.accept", String(id), `${n} đơn`);
+  audit(claimed ? "order.claim" : "trip.accept", String(claimed && ids.length ? ids[0] : id), `${n} đơn`);
   return { ...stateJson(), message: `Đã nhận chuyến ${id} (${n} đơn)` };
+}
+var acceptTrip = (r) => acceptTripId(integer(r, "id"), false);
+// Một đơn trên bảng "Đơn chờ nhận" của shipper đang đăng nhập
+function openOrderRow(o, si, ap) {
+  const fee = feeFor(o);
+  const block = claimBlock(o, si);
+  const since = o.searchSince > 0 ? o.searchSince : o.createdAt;
+  return {
+    id: o.id,
+    category: o.category,
+    categoryName: categoryName(o.category),
+    weight: o.weight,
+    urgent: o.urgent,
+    deadline: o.deadline,
+    destination: o.destination,
+    destinationName: nodeName(o.destination),
+    cod: o.cod,
+    collect: orderCollect(o, fee),
+    earn: shipperEarning(o, fee),
+    waitSeconds: since > 0 ? Math.max(0, nowSeconds() - since) : 0,
+    approachMinutes: ap.ok ? ap.minutes : null,
+    favorite: !!o.owner && S.prefs.isFavorite(o.owner, shipperNameOf(si)),
+    canClaim: block === "" && ap.ok,
+    blockReason: block === "" && !ap.ok ? "Không có đường từ chỗ bạn đang đứng tới kho" : block === "" ? null : block
+  };
+}
+// GET orders/open — bảng đơn chờ nhận của shipper: đơn của khách yêu thích bạn lên đầu, rồi đơn gấp / hạn sớm
+function openOrdersJson() {
+  const si = myShipperIndex();
+  if (si < 0)
+    throw new Forbidden("Chỉ shipper mới xem được bảng đơn chờ nhận");
+  const on = CONFIG.autoMatch;
+  const arr = [];
+  if (on) {
+    const list = S.orders.filter((o) => openForClaim(o) && !blockedFor(o, si));
+    const fav = (o) => !!o.owner && S.prefs.isFavorite(o.owner, shipperNameOf(si));
+    list.sort((a, b) => {
+      if (fav(a) !== fav(b))
+        return fav(a) ? -1 : 1;
+      return higherPriority(a, b) ? -1 : higherPriority(b, a) ? 1 : 0;
+    });
+    const ap = approachOf(shipperNode(si), S.shippers[si].vehicle);
+    for (const o of list)
+      arr.push(openOrderRow(o, si, ap));
+  }
+  return { ok: true, enabled: on, orders: arr, ready: shipperReady(si) && !S.shift.isAbsent(si), busy: S.shift.busy(si, S.orders) };
+}
+// POST order/claim — shipper bấm Nhận đơn. Mỗi yêu cầu chạy trọn vẹn một lần nên chỉ một shipper nhận được đơn;
+// người bấm sau nhận lỗi 409 kèm lý do (đã có người nhận, khách vừa huỷ, ...).
+function claimOrder(r) {
+  const si = myShipperIndex();
+  if (si < 0)
+    throw new Forbidden("Chỉ shipper mới nhận được đơn");
+  const id = integer(r, "id");
+  const o = findOrderById(id);
+  if (!o)
+    throw new Conflict(`Đơn ${id} không còn tồn tại`);
+  if (o.status !== PENDING) {
+    if ([ASSIGNED, DISPATCHED, ARRIVED, DELIVERED, FAILED, RETURNED].includes(o.status))
+      throw new Conflict(o.shipper === si ? `Bạn đã nhận đơn ${id} rồi` : `Rất tiếc, đơn ${id} vừa được shipper khác nhận trước bạn`);
+    if (o.status === CANCELLED)
+      throw new Conflict(`Đơn ${id} đã bị huỷ`);
+    throw new Conflict(`Đơn ${id} chưa mở để nhận (đang ở '${orderStatusName(o.status)}')`);
+  }
+  if (!CONFIG.autoMatch)
+    throw new Conflict("Quản trị viên đang phân công đơn thủ công, chưa mở nhận đơn tự do");
+  if (!openForClaim(o))
+    throw new Conflict(`Đơn ${id} chưa mở để nhận`);
+  if (blockedFor(o, si))
+    throw new Conflict(`Đơn ${id} không dành cho bạn`);
+  const why = claimBlock(o, si);
+  if (why)
+    throw new Conflict(why);
+  const c = { shipper: si, ap: approachOf(shipperNode(si), S.shippers[si].vehicle) };
+  if (!c.ap.ok)
+    throw new Conflict("Không có đường từ chỗ bạn đang đứng tới kho lấy hàng");
+  if (!buildClaimTrip(o, c))
+    throw new Conflict(`Xe của bạn không giao được đơn ${id} (không tới được điểm giao hoặc quá tải)`);
+  const tripId = S.shift.trips[S.shift.trips.length - 1].id;
+  const res = acceptTripId(tripId, true);
+  res.message = `Bạn đã nhận đơn ${id}. Hãy tới kho lấy hàng rồi giao tới ${nodeName(o.destination)}`;
+  return res;
 }
 function declineTrip(r) {
   const id = integer(r, "id");
@@ -1328,6 +1698,7 @@ function declineTrip(r) {
   if (blen(reason) < 3)
     throw new Invalid("Hãy nhập lý do từ chối", { reason: "Hãy nhập lý do (ít nhất 3 ký tự)" });
   const ids = t.stops.map((s) => s.orderId);
+  const autoOffer = t.fromNode >= 0;
   const n = S.shift.decline(id, S.orders, utf8Prefix(reason, 150));
   if (n < 0)
     throw new Conflict("Chuyến đã được nhận, không từ chối được nữa");
@@ -1340,12 +1711,15 @@ function declineTrip(r) {
       markTried(o, me);
       // đơn này không mời lại shipper đã từ chối
       o.searchSince = nowSeconds();
+      o.opened = false;
       logOrder("declined", o, reason);
     }
   }
   if (!CONFIG.autoMatch)
     notifyStaff("trip", 0, `${S.me.link} từ chối chuyến ${id}: ${reason}. ${n} đơn trở lại hàng chờ.`);
   audit("trip.decline", String(id), reason);
+  if (autoOffer)
+    noteMiss(me);
   matchPending();
   return { ...stateJson(), message: `Đã từ chối chuyến ${id}` };
 }
@@ -1378,6 +1752,7 @@ function shiftAbsent(r) {
       markTried(o, i);
       o.noShipperAt = 0;
       o.searchSince = nowSeconds();
+      o.opened = false;
       notify(o.owner, "order", id, `Shipper phụ trách đơn #${id} nghỉ đột xuất, hệ thống đang tìm shipper khác cho bạn`);
     }
   }
@@ -1436,7 +1811,7 @@ function statementOf(customer, fees) {
   });
   return billingStatement(facts, S.ledger.of(customer));
 }
-var statementSummary = (st) => ({ balance: st.balance, pending: st.pending, available: st.available, codTotal: st.codTotal, fees: st.fees, comps: st.comps, paidOut: st.paidOut, collected: st.collected });
+var statementSummary = (st) => ({ balance: st.balance, pending: st.pending, available: st.available, codTotal: st.codTotal, fees: st.fees, comps: st.comps, paidOut: st.paidOut, collected: st.collected, tips: st.tips });
 function walletJson(customer) {
   const st = statementOf(customer, orderFees());
   const lines = st.lines.map((l) => ({ at: l.at, kind: l.kind, order: l.order, amount: l.amount, pending: l.pending, text: l.text, ref: l.ref, tx: l.tx }));
@@ -1501,7 +1876,7 @@ function compensationBlock(o, kind) {
     if (o.status !== DELIVERED || o.deadline < 0 || o.deliveredAt <= o.deadline + 0.000000001)
       return "Đơn không giao trễ hạn nên không bồi thường trễ hạn";
   } else if (kind === "damaged" || kind === "lost") {
-    if (o.status !== ASSIGNED && o.status !== DELIVERED && o.status !== FAILED && o.status !== RETURNED)
+    if (o.status !== ASSIGNED && o.status !== ARRIVED && o.status !== DELIVERED && o.status !== FAILED && o.status !== RETURNED)
       return `Hàng chưa rời kho (đơn đang '${orderStatusName(o.status)}') nên chưa thể hư hỏng / thất lạc`;
   } else if (kind !== "other")
     return "Loại bồi thường không hợp lệ";
@@ -1630,6 +2005,14 @@ function updateConfig(r) {
     cfg.matchGiveUp = integer(r, "matchGiveUp");
   if (has(r, "clockSpeed"))
     cfg.clockSpeed = num(r, "clockSpeed");
+  if (has(r, "missLimit") && str(r, "missLimit"))
+    cfg.missLimit = integer(r, "missLimit");
+  if (has(r, "codHoldLimit") && str(r, "codHoldLimit"))
+    cfg.codHoldLimit = num(r, "codHoldLimit");
+  if (has(r, "tipMax") && str(r, "tipMax"))
+    cfg.tipMax = num(r, "tipMax");
+  if (has(r, "autoConfirmMinutes") && str(r, "autoConfirmMinutes"))
+    cfg.autoConfirmMinutes = integer(r, "autoConfirmMinutes");
   if (has(r, "tiers")) {
     // "Đồng:0:0,Bạc:5:0.03,..." (tên:số đơn tối thiểu:phần trăm giảm dạng thập phân)
     const items = str(r, "tiers").split(",");
@@ -1679,7 +2062,7 @@ function alertsJson(fees) {
     if (!S.shift.isAbsent(i))
       cap = Math.max(cap, s.capacity);
   });
-  const lateRisk = [], stale = [], failed = [], urgent = [], heavy = [];
+  const lateRisk = [], stale = [], failed = [], urgent = [], heavy = [], awaiting = [], disputed = [];
   for (const o of S.orders) {
     if (o.status === ASSIGNED && o.deadline >= 0 && o.eta > o.deadline + 0.000000001)
       lateRisk.push(o.id);
@@ -1687,6 +2070,10 @@ function alertsJson(fees) {
       stale.push(o.id);
     if (o.status === FAILED)
       failed.push(o.id);
+    if (o.status === ARRIVED)
+      awaiting.push(o.id);
+    if (o.status === ASSIGNED && o.disputes > 0)
+      disputed.push(o.id);
     if (o.status === PENDING && o.urgent)
       urgent.push(o.id);
     if (o.status === PENDING && cap > 0 && o.weight > cap + 0.000000001)
@@ -1708,7 +2095,9 @@ function alertsJson(fees) {
   add("warn", "failed", "đơn giao thất bại chờ quyết định giao lại / hoàn kho", failed, "queue");
   add("warn", "stale", "đơn mới chờ xác nhận quá 30 phút", stale, "queue");
   add("warn", "heavy", "đơn nặng hơn mọi xe đang có mặt, cần chia kiện", heavy, "queue");
-  add("info", "urgent", "đơn hoả tốc đang chờ điều phối", urgent, "dispatch");
+  add("warn", "disputed", "đơn người nhận báo chưa nhận được hàng dù shipper đã giao tới", disputed, "tracking");
+  add("info", "awaiting", "đơn shipper đã giao tới, chờ người nhận xác nhận", awaiting, "tracking");
+  add("info", "urgent", "đơn hoả tốc đang chờ shipper nhận", urgent, "dispatch");
   add("info", "trips", "chuyến chờ shipper nhận", waitingTrips, "tracking");
   add("info", "remit", "phiếu nộp COD chờ đối soát", remits, "cod");
   add("warn", "complaints", "khiếu nại mở quá 24 giờ", oldComplaints, "complaints");
@@ -1850,7 +2239,17 @@ POST("order/cancel", (r) => cancelOrder(r));
 POST("shift/cancel", (r) => cancelOrder(r));
 POST("order/deliver", (r) => deliverOrder(r));
 POST("order/rate", (r) => rateOrder(r));
-POST("order/rate-customer", (r) => rateCustomer(r));
+POST("order/arrive", (r) => arriveOrder(r));
+POST("order/receive", (r) => receiveOrder(r));
+POST("order/dispute", (r) => disputeOrder(r));
+POST("order/claim", (r) => claimOrder(r));
+GET("orders/open", () => openOrdersJson());
+POST("track/confirm", (r) => trackConfirm(r));
+POST("order/tip", (r) => tipOrder(r));
+GET("order/chat", (r) => chatJson(chatOrder(integer(r, "id"))));
+POST("order/chat/send", (r) => chatSend(r));
+GET("customer/shippers", () => prefsJson());
+POST("customer/shipper-pref", (r) => applyPref(r));
 POST("order/retry", (r) => retryOrder(r));
 POST("order/release", (r) => releaseOrder(r));
 POST("shift/fail", (r) => failOrder(r));
@@ -2009,11 +2408,13 @@ GET("audit", (r) => {
 });
 // Tải CSV đi qua exportText ở 09-main.js; đăng ký ở đây để khớp bảng phân quyền
 GET("audit/export", (r) => {
+  const csv = AuditLog.csv(auditRows(r));   // lọc trước: tham số sai -> 400, không ghi nhật ký
   audit("audit.export", "audit");
-  return { ok: true, text: AuditLog.csv(auditRows(r)) };
+  return { ok: true, text: csv };
 });
 DOWNLOADS["audit/export"] = (r) => {
+  const csv = AuditLog.csv(auditRows(r));
   audit("audit.export", "audit");
-  return AuditLog.csv(auditRows(r));
+  return csv;
 };
 GET("reports/summary", () => reportJson());

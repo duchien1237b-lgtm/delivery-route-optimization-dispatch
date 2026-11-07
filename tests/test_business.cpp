@@ -65,6 +65,7 @@ int main() {
         CHECK(!FileIO::loadOrdersText("201 1 2 0 -1 sdt=12345 x\n", back, err, &g));
         CHECK(!FileIO::loadOrdersText("201 1 2 0 -1 sdt=1909103103 x\n", back, err, &g));
         CHECK(validPhone("0909103103") && !validPhone("090910310") && !validPhone("09091031a3"));
+        CHECK(validPhone("0338123456") && validPhone("0776543210") && validPhone("02838291234") && !validPhone("1909103103") && !validPhone("090910310399") && !validPhone(""));
     }
 
     // ------------------------------------------------ Biểu phí

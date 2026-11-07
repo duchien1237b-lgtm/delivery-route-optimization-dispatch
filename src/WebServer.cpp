@@ -56,7 +56,7 @@ const std::vector<Dataset> DATASETS = {
      "map_negcycle.txt", ""},
     {"city", "Đô thị mô phỏng (2.000 điểm)",
      "Lưới 2.000 giao lộ, sông phía đông chỉ qua được ở 5 cây cầu, vành đai cấm xe máy, trung tâm cấm xe tải. "
-     "Dùng để thử thuật toán trên đồ thị lớn: so A* với Dijkstra, điều phối 24 đơn.",
+     "Dùng để thử thuật toán trên đồ thị lớn: đo 3 phiên bản Dijkstra, điều phối 24 đơn.",
      "map_city.txt", "orders_city.txt"},
     {"saved", "Bản đồ đã lưu", "Bản đồ và đơn hàng bạn đã lưu bằng nút Lưu trên server.",
      "my_map.txt", "my_orders.txt"},
@@ -100,14 +100,16 @@ struct AppState {
     Commerce::PromoStore promos;
     Commerce::AddressBook addresses;
     Commerce::ReviewStore reviews;
-    Commerce::ReviewStore custReviews;    // shipper đánh giá khách (đánh giá hai chiều)
     Commerce::StatsStore stats;
     Support::NotificationStore notes;
     Support::AuditLog audit;
     Support::Mailbox mailbox;
     Support::ComplaintStore complaints;
     Flow::CodLedger cod;
-    Billing::CustomerLedger ledger;       // chi trả / thu bù / bồi thường của khách (ví đối soát)
+    Billing::CustomerLedger ledger;       // chi trả / thu bù / bồi thường / tiền tip của khách (ví đối soát)
+    Commerce::ChatStore chat;             // trò chuyện trong đơn giữa khách và shipper
+    Commerce::PrefStore prefs;            // shipper yêu thích / bị chặn của từng khách
+    std::map<std::string, int> missStreak;   // số lời mời shipper bỏ qua / bỏ lỡ liên tiếp (chỉ trong bộ nhớ)
     Auth::ResetStore resets;
     Auth::RateLimiter limiter;
     bool demo = true;                     // chế độ demo: hộp thư giả lập đọc được qua giao diện
@@ -152,7 +154,8 @@ const size_t MAX_BODY = 4 * 1024 * 1024;
 // Các file cần ghi lại sau khi xử lý xong yêu cầu (xem flushDirty)
 enum Dirty : unsigned {
     D_USERS = 1, D_PROMOS = 2, D_ADDR = 4, D_REVIEWS = 8, D_STATS = 16, D_NOTES = 32,
-    D_AUDIT = 64, D_COMPL = 128, D_COD = 256, D_CONFIG = 512, D_ORDERS = 1024, D_FLEET = 2048, D_LEDGER = 4096, D_CREVIEWS = 8192
+    D_AUDIT = 64, D_COMPL = 128, D_COD = 256, D_CONFIG = 512, D_ORDERS = 1024, D_FLEET = 2048, D_LEDGER = 4096,
+    D_CHAT = 16384, D_PREFS = 32768
 };
 void mark(unsigned bits) {
     S.dirty |= bits;
@@ -222,7 +225,7 @@ bool sameOrigin(const httplib::Request& req) {
 }
 
 bool isCsrfExempt(const std::string& path) {
-    return path == "login" || path == "register" || path == "password/forgot" || path == "password/reset";
+    return path == "login" || path == "register" || path == "password/forgot" || path == "password/reset" || path == "track/confirm";
 }
 
 // Xác định tài khoản của yêu cầu và kiểm tra quyền. Trả về false (đã ghi lỗi 401/403) nếu không được phép.
@@ -530,7 +533,7 @@ struct View {
 bool shipperSees(const Order& o, int idx) {
     if (idx < 0) return false;
     if (o.shipper != idx) return false;
-    return o.status == DISPATCHED || o.status == ASSIGNED || o.status == DELIVERED || o.status == FAILED || o.status == RETURNED;
+    return o.status == DISPATCHED || o.status == ASSIGNED || o.status == ARRIVED || o.status == DELIVERED || o.status == FAILED || o.status == RETURNED;
 }
 View currentView() {
     View v;
@@ -655,6 +658,10 @@ bool cancelAllowedNow(const Order& o) {
     return !(isCustomer() && o.status == ASSIGNED && pickedUp(o));
 }
 
+const int64_t TIP_WINDOW = 7 * 86400;   // khách tip trong 7 ngày sau khi giao
+// Trò chuyện khách <-> shipper mở khi shipper đã nhận đơn và đơn chưa kết thúc (đang giao / giao thất bại chờ xử lý)
+bool chatOpen(const Order& o) { return o.shipper >= 0 && !o.owner.empty() && (o.status == ASSIGNED || o.status == ARRIVED || o.status == FAILED); }
+
 // Phần cước shipper nhận (cùng công thức với lúc ghi nhận đã giao)
 long long shipperEarning(const Order& o, const Pricing::Fee& fee) {
     long long part = fee.valid ? Commerce::shippingPart(fee) : 0;
@@ -665,7 +672,7 @@ long long shipperEarning(const Order& o, const Pricing::Fee& fee) {
 // Một đơn dưới dạng JSON, đã lọc theo vai trò của người xem
 Json orderRow(const Order& o, size_t index, const Pricing::Fee& fee, const std::set<int>& unreachable,
               const std::map<int, std::string>& carrier) {
-    bool late = o.deadline >= 0 && ((o.status == DELIVERED && o.deliveredAt > o.deadline + 1e-9) ||
+    bool late = o.deadline >= 0 && (((o.status == DELIVERED || o.status == ARRIVED) && o.deliveredAt > o.deadline + 1e-9) ||
                                     (o.status == ASSIGNED && o.eta > o.deadline + 1e-9));
     auto car = carrier.find(o.id);
     Json j = Json::object();
@@ -706,21 +713,19 @@ Json orderRow(const Order& o, size_t index, const Pricing::Fee& fee, const std::
         .set("cancelFee", static_cast<double>(o.cancelFee))
         .set("createdAt", static_cast<double>(o.createdAt))
         .set("deliveredReal", static_cast<double>(o.deliveredReal))
+        .set("arrivedReal", static_cast<double>(o.arrivedReal))
+        .set("disputes", o.disputes)
         .set("reachable", !unreachable.count(o.destination));
     if (!isShipper()) j.set("owner", o.owner).set("ownerName", o.owner.empty() ? Json() : Json(ownerDisplay(o.owner)));
     j.set("noShipper", o.status == PENDING && o.noShipperAt > 0).set("tried", static_cast<int>(o.tried.size()));
     if (isCustomer() || isStaff()) {
-        bool known = o.shipper >= 0 && (o.status == ASSIGNED || o.status == DELIVERED || o.status == FAILED || o.status == RETURNED);
+        bool known = o.shipper >= 0 && (o.status == ASSIGNED || o.status == ARRIVED || o.status == DELIVERED || o.status == FAILED || o.status == RETURNED);
         j.set("carrierInfo", known ? carrierInfoJson(o.shipper) : Json());
         if (o.status == DISPATCHED && isStaff() && o.shipper >= 0 && o.shipper < static_cast<int>(S.shippers.size())) j.set("offeredTo", S.shippers[o.shipper].name);
     }
     if (isShipper() || isStaff()) {
-        int cn = 0;
-        double cavg = o.owner.empty() ? 0 : S.custReviews.averageOfCustomer(o.owner, &cn);
         j.set("earn", static_cast<double>(shipperEarning(o, fee)))
-            .set("customerName", o.owner.empty() ? Json() : Json(ownerDisplay(o.owner)))
-            .set("customerRating", cn ? Json(cavg) : Json()).set("customerRatings", cn)
-            .set("ratedCustomer", S.custReviews.ofOrder(o.id) != nullptr);
+            .set("customerName", o.owner.empty() ? Json() : Json(ownerDisplay(o.owner)));
     }
     if (isCustomer() || isStaff()) {
         j.set("proof", o.proofNote).set("rated", S.reviews.ofOrder(o.id) != nullptr);
@@ -730,8 +735,28 @@ Json orderRow(const Order& o, size_t index, const Pricing::Fee& fee, const std::
             j.set("cancelFeeNow", static_cast<double>(Flow::cancelFee(cancelFeeStatus(o), std::max(0LL, part - o.loyaltyDiscount - o.promoDiscount), Commerce::config())));
         }
     }
-    // Mã xác nhận giao: chỉ chủ đơn thấy (đọc cho shipper khi nhận hàng). Điều phối viên, quản trị viên và shipper không thấy.
-    if (isCustomer() && o.owner == S.me.username) j.set("code", o.deliveryCode);
+    // Nghiệp vụ kiểu Grab: loại hàng, tiền tip, trò chuyện, shipper yêu thích / bị chặn
+    j.set("category", o.category).set("categoryName", Commerce::categoryName(o.category));
+    {
+        const Billing::Tx* tip = S.ledger.tipOf(o.id);
+        j.set("tip", static_cast<double>(tip ? tip->amount : 0));
+        if (isCustomer() && o.owner == S.me.username)
+            j.set("canTip", !tip && o.status == DELIVERED && o.shipper >= 0 && Commerce::config().tipMax > 0 &&
+                                (o.deliveredReal == 0 || nowSeconds() - o.deliveredReal <= TIP_WINDOW));
+    }
+    j.set("chatCount", S.chat.count(o.id)).set("chatOpen", chatOpen(o));
+    if (isCustomer() && o.shipper >= 0 && o.shipper < static_cast<int>(S.shippers.size()) && o.status != DISPATCHED) {
+        const std::string& nm = S.shippers[o.shipper].name;
+        j.set("carrierPref", S.prefs.isFavorite(o.owner, nm) ? "fav" : S.prefs.isBlocked(o.owner, nm) ? "block" : "");
+    }
+    // Xác nhận hai bước: shipper bấm "Đã giao tới" -> người nhận bấm "Đã nhận hàng" (hoặc tự hoàn tất sau autoConfirmMinutes phút)
+    {
+        const int wait = Commerce::config().autoConfirmMinutes;
+        j.set("receivedBy", o.receivedBy);
+        j.set("autoConfirmAt", o.status == ARRIVED && o.arrivedReal > 0 && wait > 0 ? Json(static_cast<double>(o.arrivedReal + static_cast<int64_t>(wait) * 60)) : Json());
+        j.set("canReceive", o.status == ARRIVED && ((isCustomer() && o.owner == S.me.username) || isStaff()));
+        j.set("canDispute", o.status == ARRIVED && isCustomer() && o.owner == S.me.username && o.disputes < 2);
+    }
     return j;
 }
 
@@ -1004,6 +1029,10 @@ Json configJson() {
         .set("offerSeconds", c.offerSeconds)
         .set("matchGiveUp", c.matchGiveUp)
         .set("clockSpeed", c.clockSpeed)
+        .set("missLimit", c.missLimit)
+        .set("codHoldLimit", static_cast<double>(c.codHoldLimit))
+        .set("tipMax", static_cast<double>(c.tipMax))
+        .set("autoConfirmMinutes", c.autoConfirmMinutes)
         .set("tariff", tariffJson());
 }
 
@@ -1033,6 +1062,8 @@ Json stateJson() {
                            .set("autoMatch", Commerce::config().autoMatch)
                            .set("offerSeconds", Commerce::config().offerSeconds)
                            .set("clockSpeed", Commerce::config().clockSpeed)
+                           .set("tipMax", static_cast<double>(Commerce::config().tipMax))
+                           .set("autoConfirmMinutes", Commerce::config().autoConfirmMinutes)
                            .set("tariff", tariffJson()))
         .set("settings", Json::object().set("shiftStart", S.shiftStart).set("rush", rushJson()))
         .set("shift", shiftJson())
@@ -1179,7 +1210,7 @@ std::vector<OrderRecord> exportRecords() {
     for (const Order& o : S.orders) {
         OrderRecord r = o.toRecord();
         r.status = 0; r.eta = -1; r.deliveredAt = -1; r.attempts = 0; r.failReason = -1; r.cancelFee = 0;
-        r.deliveryCode.clear(); r.proofNote.clear(); r.deliveredReal = 0; r.codRecorded = false; r.shipperName.clear();
+        r.deliveryCode.clear(); r.proofNote.clear(); r.deliveredReal = 0; r.arrivedReal = 0; r.disputes = 0; r.receivedBy.clear(); r.codRecorded = false; r.shipperName.clear();
         r.returnFee = 0; r.closedAt = 0;
         recs.push_back(r);
     }
@@ -1205,13 +1236,14 @@ void flushDirty() {
     if (d & D_PROMOS) writeDataFile("promos.txt", S.promos.toText());
     if (d & D_ADDR) writeDataFile("addresses.txt", S.addresses.toText());
     if (d & D_REVIEWS) writeDataFile("reviews.txt", S.reviews.toText());
-    if (d & D_CREVIEWS) writeDataFile("customer_reviews.txt", S.custReviews.toText());
     if (d & D_STATS) writeDataFile("stats.txt", S.stats.toText());
     if (d & D_NOTES) writeDataFile("notifications.txt", S.notes.toText());
     if (d & D_AUDIT) writeDataFile("audit.txt", S.audit.toText());
     if (d & D_COMPL) writeDataFile("complaints.txt", S.complaints.toText());
     if (d & D_COD) writeDataFile("cod_ledger.txt", S.cod.toText());
     if (d & D_LEDGER) writeDataFile("customer_ledger.txt", S.ledger.toText());
+    if (d & D_CHAT) writeDataFile("order_chat.txt", S.chat.toText());
+    if (d & D_PREFS) writeDataFile("customer_prefs.txt", S.prefs.toText());
     if (d & D_CONFIG) writeDataFile("config.txt", Commerce::config().toText());
     if (d & D_FLEET) writeDataFile("shippers.txt", shippersToText(S.shippers));
     if ((d & D_ORDERS) && S.dataset == "hcm") writeDataFile("orders_live.txt", liveOrdersText());
@@ -1632,23 +1664,12 @@ void registerRoutes(httplib::Server& svr) {
             opt.vehicle = veh;
             opt.departAt = depart;
             opt.rush = rush;
-            opt.target = dst;   // dừng khi đã chốt điểm đến (so sánh công bằng với A*)
+            opt.target = dst;   // dừng khi đã chốt điểm đến 
             ShortestPath::Tree t = ShortestPath::dijkstra(S.graph, src, v, opt);
             std::string key = v == ShortestPath::Version::ARRAY ? "array" : v == ShortestPath::Version::STL_PQ ? "stl" : "heap";
             std::string warn = t.negativeEdge ? "Có cạnh trọng số âm: Dijkstra không đảm bảo kết quả đúng." : "";
             add(key, ShortestPath::versionName(v), ShortestPath::getPath(t, dst), t.dist[dst], t.micros,
                 t.heapOps, warn, Json(t.settleOrder), static_cast<int>(t.settleOrder.size()));
-        }
-        {
-            ShortestPath::Options opt;
-            opt.criterion = crit;
-            opt.vehicle = veh;
-            opt.departAt = depart;
-            opt.rush = rush;
-            ShortestPath::Tree t = ShortestPath::astar(S.graph, src, dst, opt);
-            std::string warn = t.negativeEdge ? "Có cạnh trọng số âm: A* (cũng như Dijkstra) không đảm bảo kết quả đúng." : "";
-            add("astar", "A* (đường chim bay)", ShortestPath::getPath(t, dst), t.dist[dst], t.micros, t.heapOps, warn,
-                Json(t.settleOrder), static_cast<int>(t.settleOrder.size()));
         }
         {
             BFResult bf = bellmanFord(S.graph, src, crit, veh, depart, rush);
@@ -1702,44 +1723,6 @@ void registerRoutes(httplib::Server& svr) {
                           .set("opsHeap", b.opsHeap)
                           .set("agree", b.agree));
         return Json::object().set("ok", true).set("rows", rows).set("degree", deg).set("repeats", reps);
-    }));
-
-    // Truy vấn điểm - điểm trên bản đồ hiện tại: Dijkstra (dừng sớm) so với A*
-    routeGet(svr, "/api/benchmark/p2p", wrap([](const httplib::Request& r) {
-        int pairs = std::clamp(integer(r, "pairs", 50), 1, 500);
-        Criterion crit = criterionParam(r);
-        std::vector<int> ids = S.graph.nodeIds();
-        if (ids.size() < 2) throw BadRequest("Bản đồ cần ít nhất 2 điểm");
-        std::mt19937 rng(7);
-        std::uniform_int_distribution<size_t> pick(0, ids.size() - 1);
-        double tD = 0, tA = 0;
-        long long sD = 0, sA = 0;
-        int found = 0, agree = 0;
-        for (int i = 0; i < pairs; ++i) {
-            int a = ids[pick(rng)], b = ids[pick(rng)];
-            if (a == b) { --i; continue; }
-            ShortestPath::Options opt;
-            opt.criterion = crit;
-            opt.target = b;
-            ShortestPath::Tree d = ShortestPath::dijkstra(S.graph, a, ShortestPath::Version::MIN_HEAP, opt);
-            ShortestPath::Tree s = ShortestPath::astar(S.graph, a, b, opt);
-            tD += d.micros;
-            tA += s.micros;
-            sD += static_cast<long long>(d.settleOrder.size());
-            sA += static_cast<long long>(s.settleOrder.size());
-            if (d.dist[b] != ShortestPath::INF) {
-                ++found;
-                if (std::fabs(d.dist[b] - s.dist[b]) < 1e-6) ++agree;
-            } else if (s.dist[b] == ShortestPath::INF) ++agree;
-        }
-        return Json::object()
-            .set("ok", true)
-            .set("pairs", pairs)
-            .set("nodes", S.graph.nodeCount())
-            .set("found", found)
-            .set("agree", agree == pairs)
-            .set("dijkstra", Json::object().set("settled", (double)sD / pairs).set("micros", tD / pairs))
-            .set("astar", Json::object().set("settled", (double)sA / pairs).set("micros", tA / pairs));
     }));
 
     // --------------------------------------------------- Bellman-Ford & dự toán
@@ -1815,7 +1798,8 @@ void registerRoutes(httplib::Server& svr) {
             S.accounts.renameLink(oldName, S.shippers[i].name);
             S.stats.rename(oldName, S.shippers[i].name);
             S.cod.renameShipper(oldName, S.shippers[i].name);
-            mark(D_USERS | D_STATS | D_COD);
+            S.prefs.renameShipper(oldName, S.shippers[i].name);
+            mark(D_USERS | D_STATS | D_COD | D_PREFS);
         }
         mark(D_FLEET | D_ORDERS);
         audit("fleet.update", S.shippers[i].name);
@@ -1952,7 +1936,7 @@ void registerRoutes(httplib::Server& svr) {
         mark(D_ORDERS);
         audit("shift.reset", "shift");
         for (Order& o : S.orders)
-            if (o.status == PENDING) o.searchSince = nowSeconds();
+            if (o.status == PENDING) { o.searchSince = nowSeconds(); o.opened = false; }
         matchPending();
         return stateJson().set("message", "Đã đặt lại ca: các đơn chưa xong quay về chờ giao");
     }));
@@ -1992,11 +1976,10 @@ void registerRoutes(httplib::Server& svr) {
     // Mô phỏng từng bước một thuật toán (trang Mô phỏng)
     routeGet(svr, "/api/trace", wrap([](const httplib::Request& r) {
         std::string algo = str(r, "algo", "dijkstra");
-        if (algo != "dijkstra" && algo != "astar" && algo != "bfs" && algo != "dfs" && algo != "bellman")
+        if (algo != "dijkstra" && algo != "bfs" && algo != "dfs" && algo != "bellman")
             throw BadRequest("Thuật toán không hợp lệ: " + algo);
         int src = requireNode(r, "src");
         int dst = has(r, "dst") && !str(r, "dst").empty() ? requireNode(r, "dst") : -1;
-        if (algo == "astar" && dst < 0) throw BadRequest("A* cần điểm đến");
         Criterion crit = criterionParam(r);
         Vehicle veh = vehicleParam(r);
         Trace::Result t = Trace::run(S.graph, algo, src, dst, crit, veh, 4000);
@@ -2027,7 +2010,6 @@ void registerRoutes(httplib::Server& svr) {
             .set("dist", dist)
             .set("prev", prev)
             .set("cycle", Json(t.cycle))
-            .set("alpha", t.heuristicScale)
             .set("criterion", criterionName(crit));
     }));
 
@@ -2102,13 +2084,14 @@ int runWebServer(const ServerConfig& cfg) {
     loadOptional("promos.txt", [](const std::string& t, std::string& e) { return S.promos.loadText(t, e); });
     loadOptional("addresses.txt", [](const std::string& t, std::string& e) { return S.addresses.loadText(t, e); });
     loadOptional("reviews.txt", [](const std::string& t, std::string& e) { return S.reviews.loadText(t, e); });
-    loadOptional("customer_reviews.txt", [](const std::string& t, std::string& e) { return S.custReviews.loadText(t, e); });
     loadOptional("stats.txt", [](const std::string& t, std::string& e) { return S.stats.loadText(t, e); });
     loadOptional("notifications.txt", [](const std::string& t, std::string& e) { return S.notes.loadText(t, e); });
     loadOptional("audit.txt", [](const std::string& t, std::string& e) { return S.audit.loadText(t, e); });
     loadOptional("complaints.txt", [](const std::string& t, std::string& e) { return S.complaints.loadText(t, e); });
     loadOptional("cod_ledger.txt", [](const std::string& t, std::string& e) { return S.cod.loadText(t, e); });
     loadOptional("customer_ledger.txt", [](const std::string& t, std::string& e) { return S.ledger.loadText(t, e); });
+    loadOptional("order_chat.txt", [](const std::string& t, std::string& e) { return S.chat.loadText(t, e); });
+    loadOptional("customer_prefs.txt", [](const std::string& t, std::string& e) { return S.prefs.loadText(t, e); });
     if (!loadShippers(dataPath("shippers.txt"), S.shippers, err)) {
         std::cerr << "[Canh bao] " << err << " -> dung 2 shipper mac dinh\n";
         S.shippers = {{"Shipper 1", 20, MOTORBIKE}, {"Shipper 2", 50, CAR}};
@@ -2136,10 +2119,15 @@ int runWebServer(const ServerConfig& cfg) {
     svr.set_post_routing_handler([](const httplib::Request& req, httplib::Response& res) {
         res.set_header("X-Content-Type-Options", "nosniff");
         res.set_header("X-Frame-Options", "DENY");
-        res.set_header("Referrer-Policy", "same-origin");
+        // Referer chỉ gửi nguồn gốc (không đường dẫn) ra ngoài: Google Maps cần để kiểm tra giới hạn domain của khoá API.
+        res.set_header("Referrer-Policy", "strict-origin-when-cross-origin");
+        // Cho phép nạp Google Maps JavaScript API (tuỳ chọn, chỉ chạy khi người dùng nhập khoá ở giao diện).
         res.set_header("Content-Security-Policy",
-                       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; "
-                       "font-src 'self' https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+                       "default-src 'self'; script-src 'self' https://maps.googleapis.com https://*.gstatic.com https://*.google.com https://*.ggpht.com blob:; "
+                       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                       "img-src 'self' data: blob: https://*.googleapis.com https://*.gstatic.com https://*.google.com https://*.ggpht.com https://*.googleusercontent.com https://tile.openstreetmap.org; "
+                       "font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://router.project-osrm.org https://*.googleapis.com https://*.google.com https://*.gstatic.com data: blob:; "
+                       "worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
         if (req.path.rfind("/api/", 0) == 0) res.set_header("Cache-Control", "no-store");
     });
     svr.set_error_handler([](const httplib::Request& req, httplib::Response& res) {

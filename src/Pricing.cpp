@@ -96,6 +96,7 @@ Finance summarize(const std::vector<Order>& orders, const std::vector<Fee>& fees
                 s.revenue += r;
                 break;
             }
+            case ARRIVED:
             case ASSIGNED: {
                 f.expectedRevenue += fee.total;
                 f.codOnRoute += cod;

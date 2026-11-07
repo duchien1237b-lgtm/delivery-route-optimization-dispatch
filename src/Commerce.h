@@ -47,6 +47,12 @@ struct Config {
     int offerSeconds = 45;            // hạn trả lời một lời mời (giây thật); quá hạn thì mời shipper kế tiếp
     int matchGiveUp = 10;             // hết shipper để mời quá số phút này thì tự huỷ đơn không mất phí; 0 = không tự huỷ
     double clockSpeed = 0;            // giờ ca chạy theo giờ thật: số phút ca trôi mỗi phút thật (0 = chỉ chạy khi giao đơn / mô phỏng)
+    // Nghiệp vụ kiểu Grab bổ sung (v12)
+    int missLimit = 3;                // bỏ qua / bỏ lỡ liên tiếp số lời mời này thì shipper tự chuyển sang Tạm nghỉ; 0 = tắt
+    long long codHoldLimit = 5000000; // shipper đang giữ tiền mặt thu hộ quá mức này thì không được mời đơn thu tiền; 0 = không chặn
+    long long tipMax = 200000;        // tiền tip tối đa cho một đơn (bội số 1.000 đ); 0 = tắt tính năng tip
+    // Xác nhận hai bước (v15): shipper bấm "Đã giao tới", người nhận bấm "Đã nhận hàng"
+    int autoConfirmMinutes = 30;      // người nhận không phản hồi quá số phút thật này thì đơn tự hoàn tất; 0 = không tự hoàn tất
     Config();
     std::string toText() const;
     bool loadText(const std::string& text, std::string& error);   // cũng nạp biểu phí vào Pricing::tariff()
@@ -184,6 +190,60 @@ public:
 private:
     std::map<std::string, ShipperStat> stats_;
 };
+// ------------------------------------------------------------- Loại hàng (khai khi đặt đơn, như GrabExpress)
+// Mã: tailieu, thucpham, quanao, dientu, devo, khac. Rỗng = đơn cũ / nhân viên không khai.
+const char* categoryName(const std::string& code);   // "" nếu mã không hợp lệ
+bool validCategory(const std::string& code);
+const std::vector<std::string>& categoryCodes();
+
+// ------------------------------------------------------------- Trò chuyện trong đơn (khách <-> shipper)
+// data/order_chat.txt: "M id don thoi_diem nguoi_gui vai_tro(C|S|A) noi_dung"
+struct ChatMessage {
+    int id = 0, order = 0;
+    int64_t at = 0;
+    std::string from;     // tên đăng nhập người gửi
+    char role = 'C';      // C khách, S shipper, A quản trị viên (tổng đài)
+    std::string text;
+};
+const size_t MAX_CHAT_TEXT = 300;   // ký tự (UTF-8) mỗi tin
+const size_t MAX_CHAT_PER_ORDER = 200;
+class ChatStore {
+public:
+    bool loadText(const std::string& text, std::string& error);
+    std::string toText() const;
+    // Kiểm tra nội dung (1–300 ký tự, gộp xuống dòng thành dấu cách), tối đa 200 tin mỗi đơn. Trả về lỗi, rỗng nếu được.
+    std::string add(ChatMessage m, int& id);
+    std::vector<const ChatMessage*> of(int order) const;
+    int count(int order) const;
+    void removeOrder(int order);
+
+private:
+    std::vector<ChatMessage> items_;
+    int next_ = 1;
+};
+
+// ------------------------------------------------------------- Shipper yêu thích / bị chặn của từng khách
+// data/customer_prefs.txt: "F khach ten_shipper" (yêu thích) | "B khach ten_shipper" (chặn)
+const size_t MAX_PREFS = 10;   // tối đa 10 shipper yêu thích và 10 shipper bị chặn mỗi khách
+class PrefStore {
+public:
+    bool loadText(const std::string& text, std::string& error);
+    std::string toText() const;
+    bool isBlocked(const std::string& customer, const std::string& shipper) const;
+    bool isFavorite(const std::string& customer, const std::string& shipper) const;
+    std::vector<std::string> blocked(const std::string& customer) const;
+    std::vector<std::string> favorites(const std::string& customer) const;
+    // action: block | unblock | fav | unfav. Chặn thì bỏ khỏi yêu thích và ngược lại. Trả về lỗi, rỗng nếu được.
+    std::string apply(const std::string& customer, const std::string& shipper, const std::string& action);
+    void renameShipper(const std::string& oldName, const std::string& newName);
+    void removeCustomer(const std::string& customer);
+
+private:
+    struct Pref { char kind; std::string customer, shipper; };
+    std::vector<Pref> items_;
+    size_t countOf(const std::string& customer, char kind) const;
+};
+
 // Điểm hiệu suất 0–100. Chưa có dữ liệu thì dùng giá trị trung tính (đúng hạn 100%, 4 sao).
 double performanceScore(const ShipperStat& s, double avgStars, int ratingCount);
 

@@ -97,6 +97,11 @@ void releasePromo(Order& o) {
     o.promoDiscount = 0;
 }
 
+void systemAudit(const std::string& action, const std::string& target, const std::string& detail = "") {
+    S.audit.add("hệ thống", "system", action, target, detail, nowSeconds());
+    mark(D_AUDIT);
+}
+
 void logOrder(const char* type, const Order& o, const std::string& detail = "") {
     S.shift.log(S.shift.clock(), type, o.id, o.shipper, detail);
 }
@@ -145,7 +150,7 @@ Order readOrderFields(const httplib::Request& r, Order o) {
     if (cod < 0 || cod > MAX_COD || std::floor(cod) != cod) throw Invalid("Tiền thu hộ phải là số nguyên từ 0 đến 50.000.000 đ", {{"cod", "Từ 0 đến 50.000.000 đ"}});
     o.cod = static_cast<long long>(cod);
     o.phone = Auth::normalizePhone(str(r, "phone", o.phone));
-    if (!o.phone.empty() && !validPhone(o.phone)) throw Invalid("Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0", {{"phone", "10 chữ số, bắt đầu bằng 0"}});
+    if (!o.phone.empty() && !validPhone(o.phone)) throw Invalid("Số điện thoại phải bắt đầu bằng số 0 và gồm 10–11 chữ số", {{"phone", "Bắt đầu bằng 0, 10–11 chữ số"}});
     o.recipient = trimmed(str(r, "recipient", o.recipient));
     for (char& c : o.recipient)
         if (c == '#' || c == '\n' || c == '\r' || c == '_') c = ' ';
@@ -153,6 +158,11 @@ Order readOrderFields(const httplib::Request& r, Order o) {
     if (chars > 60) throw Invalid("Tên người nhận quá dài (tối đa 60 ký tự)", {{"recipient", "Tối đa 60 ký tự"}});
     if (o.cod > 0 && o.phone.empty()) throw Invalid("Đơn thu hộ cần số điện thoại người nhận để xác nhận khi giao", {{"phone", "Bắt buộc với đơn thu hộ"}});
     readBillingFields(r, o);
+    if (has(r, "category")) {
+        std::string cat = trimmed(str(r, "category"));
+        if (!cat.empty() && !Commerce::validCategory(cat)) throw Invalid("Loại hàng không hợp lệ", {{"category", "Chọn loại hàng"}});
+        o.category = cat;
+    }
     if (o.receiverPays && o.phone.empty()) throw Invalid("Người nhận trả cước thì cần số điện thoại người nhận", {{"phone", "Bắt buộc khi người nhận trả cước"}});
     return o;
 }
@@ -163,7 +173,7 @@ int nextOrderId() {
     return maxId + 1;
 }
 
-bool isOpenStatus(int st) { return st == CREATED || st == PENDING || st == DISPATCHED || st == ASSIGNED || st == FAILED; }
+bool isOpenStatus(int st) { return st == CREATED || st == PENDING || st == DISPATCHED || st == ASSIGNED || st == ARRIVED || st == FAILED; }
 
 // Hạn giao là phút tính từ đầu ca: không nhận hạn đã qua so với đồng hồ ca hiện tại
 void checkDeadlineAhead(const Order& o) {
@@ -214,6 +224,10 @@ Json createOrder(const httplib::Request& r) {
         if (o.recipient.size() < 2) throw Invalid("Hãy nhập tên người nhận", {{"recipient", "Hãy nhập tên người nhận"}});
         if (o.phone.empty()) throw Invalid("Hãy nhập số điện thoại người nhận", {{"phone", "Hãy nhập số điện thoại người nhận"}});
         o.owner = S.me.username;
+        // Loại hàng + cam kết không gửi hàng cấm (như GrabExpress). Ứng dụng cũ không gửi loại hàng: coi là "Khác".
+        if (has(r, "category") && !flag(r, "pledge"))
+            throw Invalid("Hãy xác nhận hàng gửi không thuộc danh mục cấm vận chuyển", {{"pledge", "Bắt buộc xác nhận"}});
+        if (o.category.empty()) o.category = "khac";
         int open = 0;
         for (const Order& x : S.orders) open += x.owner == o.owner && isOpenStatus(x.status);
         if (open >= cfg.maxOpenOrders)
@@ -259,7 +273,7 @@ Json createOrder(const httplib::Request& r) {
     matchPending();
     const Order& cur = *findOrderById(newId);   // sau khi ghép: có thể đã được mời cho một shipper
     return stateJson().set("created", newId).set("order", Json::object().set("id", newId).set("status", cur.status).set("net", static_cast<double>(q.net)).set("total", static_cast<double>(q.total)))
-        .set("message", isCustomer() ? "Đã tạo đơn " + std::to_string(newId) + (cfg.autoMatch ? ", hệ thống đang tìm shipper gần nhất" : ", đang chờ quản trị viên xác nhận") : "Đã tạo đơn " + std::to_string(newId));
+        .set("message", isCustomer() ? "Đã tạo đơn " + std::to_string(newId) + (cfg.autoMatch ? ", đơn đang chờ shipper nhận" : ", đang chờ quản trị viên xác nhận") : "Đã tạo đơn " + std::to_string(newId));
 }
 
 // Nhân viên sửa đơn Mới / Chờ giao; khách tự sửa đơn của mình khi còn ở trạng thái Mới (chưa được xác nhận)
@@ -280,6 +294,9 @@ Json updateOrder(const httplib::Request& r) {
             for (int u : Traversal::unreachableFrom(S.graph, S.depot))
                 if (u == edited.destination) throw Invalid("Kho chưa có đường tới " + nodeName(edited.destination), {{"destination", "Chưa có đường tới điểm này"}});
         if (edited.destination != o.destination) edited.address = 0;
+        if (edited.category.empty()) edited.category = o.category.empty() ? "khac" : o.category;
+        if (edited.category != o.category && !flag(r, "pledge"))
+            throw Invalid("Đổi loại hàng thì hãy xác nhận lại hàng không thuộc danh mục cấm", {{"pledge", "Bắt buộc xác nhận"}});
     }
     if (has(r, "owner") && isAdmin()) {
         edited.owner = lowerCopy(str(r, "owner"));
@@ -315,7 +332,7 @@ Json removeOrder(const httplib::Request& r) {
     int id = integer(r, "id");
     auto it = std::find_if(S.orders.begin(), S.orders.end(), [id](const Order& o) { return o.id == id; });
     if (it == S.orders.end()) throw BadRequest("Không có đơn " + std::to_string(id));
-    if (it->status == ASSIGNED || it->status == DISPATCHED)
+    if (it->status == ASSIGNED || it->status == DISPATCHED || it->status == ARRIVED)
         throw Conflict("Đơn " + std::to_string(id) + " đang trong chuyến giao. Huỷ hoặc thu hồi phân công trước rồi mới xoá.");
     if (it->status == CREATED || it->status == PENDING) releasePromo(*it);
     S.orders.erase(it);
@@ -340,7 +357,7 @@ Json confirmOrder(const httplib::Request& r) {
     mark(D_ORDERS);
     logOrder("confirmed", o, S.me.username);
     audit("order.confirm", std::to_string(o.id));
-    o.searchSince = nowSeconds();
+    o.searchSince = nowSeconds(); o.opened = false;
     notify(o.owner, "order", o.id, "Đơn #" + std::to_string(o.id) + " đã được xác nhận, hệ thống đang tìm shipper");
     matchPending();
     return stateJson().set("message", "Đã xác nhận đơn " + std::to_string(o.id));
@@ -433,27 +450,33 @@ void onDelivered(Order& o) {
     mark(D_ORDERS);
 }
 
-Json deliverOrder(const httplib::Request& r) {
+// Hoàn tất đơn khi người nhận xác nhận "Đã nhận hàng" (hoặc hệ thống tự hoàn tất / quản trị viên xác nhận thay).
+// `by`: khach | nguoi_nhan | tu_dong | tên quản trị viên (lưu vào đơn để tra lại ai đã xác nhận).
+bool completeReceipt(Order& o, const std::string& by, const std::string& note = "") {
+    double at = std::max(S.shift.clock(), o.eta);
+    S.shift.advance(at);
+    if (!S.shift.deliver(o.id, S.orders, at)) return false;
+    o.deliveredReal = nowSeconds();
+    o.receivedBy = by;
+    if (!note.empty()) o.proofNote = note;
+    onDelivered(o);
+    matchPending();
+    return true;
+}
+
+// Bước 1: shipper tới nơi và bấm "Đã giao tới" (thu đủ tiền mặt nếu đơn có COD / người nhận trả cước).
+// Đơn chuyển sang "Chờ xác nhận"; người nhận phải bấm "Đã nhận hàng" thì đơn mới hoàn tất.
+Json arriveOrder(const httplib::Request& r) {
     int id = integer(r, "id");
-    Order& o = orderForActor(id);   // shipper chỉ xác nhận đơn trong chuyến của mình
+    Order& o = orderForActor(id);   // shipper chỉ báo đơn trong chuyến của mình
     if (isShipper() && o.shipper != myShipperIndex()) throw Forbidden("Đơn " + std::to_string(id) + " không nằm trong chuyến của bạn");
     int to = 0;
-    std::string why = Flow::check(o.status, "deliver", actorBit(), &to);
+    std::string why = Flow::check(o.status, "arrive", actorBit(), &to);
     if (!why.empty()) throw Conflict(why);
-    int64_t now = nowSeconds();
     std::string note = trimmed(str(r, "note"));
     if (note.size() > 150) throw Invalid("Ghi chú tối đa 150 ký tự", {{"note", "Ghi chú tối đa 150 ký tự"}});
-    bool force = isStaff() && flag(r, "force");   // nhân viên giao thay khi khách không đọc được mã
-    if (force) {
-        if (note.size() < 3) throw Invalid("Giao thay cần ghi rõ lý do", {{"note", "Ghi lý do giao thay"}});
-    } else {
-        if (!S.limiter.allow("code:" + std::to_string(id), now, 6, 600))
-            throw TooMany("Nhập sai mã quá nhiều lần, hãy thử lại sau ít phút", S.limiter.retryAfter("code:" + std::to_string(id), now, 600));
-        if (trimmed(str(r, "code")) != o.deliveryCode || o.deliveryCode.empty())
-            throw BadRequest("Mã xác nhận giao không đúng. Hãy hỏi người nhận mã 4 số hiển thị trong đơn của họ.");
-    }
     long long collect = orderCollect(o, feeFor(o));
-    if (collect > 0) {   // đơn thu hộ / người nhận trả cước chưa hoàn tất nếu chưa ghi nhận tiền mặt
+    if (collect > 0) {   // đơn thu hộ / người nhận trả cước: shipper phải xác nhận đã thu đủ tiền mặt
         double cash = num(r, "cash", -1);
         if (cash != static_cast<double>(collect))
             throw Invalid("Hãy thu của người nhận đúng " + money(collect) + (o.receiverPays ? " (gồm cước do người nhận trả)" : ""),
@@ -461,13 +484,138 @@ Json deliverOrder(const httplib::Request& r) {
     }
     double at = std::max(S.shift.clock(), o.eta);
     S.shift.advance(at);
-    if (!S.shift.deliver(id, S.orders, at)) throw Conflict("Không xác nhận giao được đơn ở trạng thái '" + std::string(orderStatusName(o.status)) + "'");
-    o.deliveredReal = now;
+    if (!S.shift.arrive(id, S.orders, at)) throw Conflict("Không báo giao tới được đơn ở trạng thái '" + std::string(orderStatusName(o.status)) + "'");
+    o.arrivedReal = nowSeconds();
     if (!note.empty()) o.proofNote = note;
-    onDelivered(o);
-    audit(force ? "order.deliver_force" : "order.deliver", std::to_string(id), collect ? "thu " + money(collect) : "");
-    matchPending();   // shipper vừa giao xong đã rảnh
-    return stateJson().set("message", "Đã xác nhận giao đơn " + std::to_string(id) + (collect ? ", ghi nhận đã thu " + money(collect) : ""));
+    if (collect > 0 && !o.codRecorded) {   // tiền mặt đã nằm trong tay shipper: ghi sổ COD ngay (chờ nộp), không đợi người nhận bấm xác nhận
+        S.cod.record(o.id, shipperNameOf(o.shipper), collect, nowSeconds());
+        o.codRecorded = true;
+        mark(D_COD);
+    }
+    if (o.shipper >= 0) S.missStreak[shipperNameOf(o.shipper)] = 0;
+    logOrder("arrived", o, collect ? "thu " + money(collect) : "");
+    audit("order.arrive", std::to_string(id), collect ? "thu " + money(collect) : "");
+    const int wait = Commerce::config().autoConfirmMinutes;
+    notify(o.owner, "order", id, "Shipper " + shipperNameOf(o.shipper) + " đã giao tới đơn #" + std::to_string(id) + ". Nếu bạn / người nhận đã nhận được hàng, hãy bấm “Đã nhận hàng” để hoàn tất" +
+                                     (wait > 0 ? " (đơn tự hoàn tất sau " + std::to_string(wait) + " phút nếu không có phản hồi)." : "."));
+    mark(D_ORDERS);
+    matchPending();   // shipper đã rảnh trong lúc chờ người nhận xác nhận
+    return stateJson().set("message", "Đã báo giao tới đơn " + std::to_string(id) + (collect ? ", ghi nhận đã thu " + money(collect) : "") +
+                                          ". Đơn hoàn tất khi người nhận xác nhận “Đã nhận hàng”.");
+}
+
+// Bước 2: người nhận (khách đặt đơn) bấm "Đã nhận hàng". Quản trị viên xác nhận thay phải ghi lý do.
+Json receiveOrder(const httplib::Request& r) {
+    int id = integer(r, "id");
+    Order& o = orderForActor(id);   // khách chỉ xác nhận đơn của mình
+    std::string why = Flow::check(o.status, "receive", actorBit());
+    if (!why.empty()) throw Conflict(why);
+    std::string note = trimmed(str(r, "note"));
+    if (note.size() > 150) throw Invalid("Ghi chú tối đa 150 ký tự", {{"note", "Ghi chú tối đa 150 ký tự"}});
+    if (isStaff() && note.size() < 3) throw Invalid("Xác nhận thay cần ghi rõ lý do", {{"note", "Ghi lý do xác nhận thay"}});
+    const std::string by = isStaff() ? "qt:" + S.me.username : "khach";
+    if (!completeReceipt(o, by, isStaff() ? "Quản trị viên xác nhận thay: " + note : "")) throw Conflict("Không xác nhận được đơn ở trạng thái '" + std::string(orderStatusName(o.status)) + "'");
+    logOrder("received", o, isStaff() ? S.me.username + ": " + note : S.me.username);
+    audit(isStaff() ? "order.receive_force" : "order.receive", std::to_string(id), isStaff() ? note : "");
+    notify(accountOfShipper(shipperNameOf(o.shipper)), "order", id, "Đơn #" + std::to_string(id) + " đã được người nhận xác nhận. Cảm ơn bạn!");
+    return stateJson().set("message", "Đã xác nhận nhận hàng đơn " + std::to_string(id));
+}
+
+// Người nhận báo "Chưa nhận được hàng": đơn quay lại Đang giao để shipper liên hệ / giao lại. Mỗi đơn báo tối đa 2 lần.
+const int MAX_DISPUTES = 2;
+Json disputeOrder(const httplib::Request& r) {
+    int id = integer(r, "id");
+    Order& o = orderForActor(id);
+    std::string why = Flow::check(o.status, "dispute", actorBit());
+    if (!why.empty()) throw Conflict(why);
+    if (o.disputes >= MAX_DISPUTES) throw Conflict("Đơn này đã được báo chưa nhận " + std::to_string(MAX_DISPUTES) + " lần. Hãy gửi khiếu nại để quản trị viên xử lý.");
+    std::string reason = trimmed(str(r, "reason"));
+    if (reason.size() > 150) throw Invalid("Lý do tối đa 150 ký tự", {{"reason", "Tối đa 150 ký tự"}});
+    if (!S.shift.reopenDelivery(id, S.orders)) throw Conflict("Không thể báo chưa nhận hàng khi đơn ở trạng thái '" + std::string(orderStatusName(o.status)) + "'");
+    ++o.disputes;
+    o.arrivedReal = 0;
+    logOrder("disputed", o, reason.empty() ? S.me.username : reason);
+    audit("order.dispute", std::to_string(id), reason);
+    notify(accountOfShipper(shipperNameOf(o.shipper)), "order", id, "Người nhận báo CHƯA nhận được đơn #" + std::to_string(id) + (reason.empty() ? "" : " (" + reason + ")") + ". Hãy liên hệ người nhận rồi bấm “Đã giao tới” lại.");
+    notifyStaff("order", id, "Người nhận báo chưa nhận được đơn #" + std::to_string(id) + " dù shipper " + shipperNameOf(o.shipper) + " đã bấm giao tới" +
+                                (o.codRecorded ? " (đơn đã ghi thu tiền mặt, hãy kiểm tra)" : "") + (reason.empty() ? "" : ": " + reason));
+    mark(D_ORDERS);
+    return stateJson().set("message", "Đã báo chưa nhận được hàng. Shipper sẽ liên hệ bạn.");
+}
+
+// Quản trị viên xác nhận giao thay khi người nhận / shipper không thao tác được (bắt buộc ghi lý do)
+Json deliverOrder(const httplib::Request& r) {
+    int id = integer(r, "id");
+    Order& o = orderForActor(id);
+    std::string why = Flow::check(o.status, "deliver", actorBit());
+    if (!why.empty()) throw Conflict(why);
+    std::string note = trimmed(str(r, "note"));
+    if (note.size() > 150) throw Invalid("Ghi chú tối đa 150 ký tự", {{"note", "Ghi chú tối đa 150 ký tự"}});
+    if (note.size() < 3) throw Invalid("Giao thay cần ghi rõ lý do", {{"note", "Ghi lý do giao thay"}});
+    long long collect = orderCollect(o, feeFor(o));
+    if (collect > 0 && o.status == ASSIGNED) {
+        double cash = num(r, "cash", -1);
+        if (cash != static_cast<double>(collect))
+            throw Invalid("Hãy xác nhận đã thu đúng " + money(collect), {{"cash", "Cần thu đủ " + money(collect)}});
+    }
+    if (!completeReceipt(o, "qt:" + S.me.username, "Quản trị viên giao thay: " + note)) throw Conflict("Không xác nhận giao được đơn ở trạng thái '" + std::string(orderStatusName(o.status)) + "'");
+    logOrder("received", o, S.me.username + ": " + note);
+    audit("order.deliver_force", std::to_string(id), note);
+    return stateJson().set("message", "Đã xác nhận giao thay đơn " + std::to_string(id));
+}
+
+// Người nhận không có tài khoản: xác nhận / báo chưa nhận ngay trên trang tra cứu (mã đơn + SĐT người nhận)
+Json trackConfirm(const httplib::Request& r) {
+    int64_t now = nowSeconds();
+    if (!S.limiter.allow("trackc:" + S.ip, now, 12, 600))
+        throw TooMany("Bạn thao tác quá nhiều lần, hãy thử lại sau ít phút", S.limiter.retryAfter("trackc:" + S.ip, now, 600));
+    const std::string notFound = "Không tìm thấy đơn phù hợp. Hãy kiểm tra lại mã đơn và số điện thoại người nhận.";
+    std::string code = trimmed(str(r, "code"));
+    std::string phone = Auth::normalizePhone(str(r, "phone"));
+    std::string act = str(r, "action", "receive");
+    if (code.empty() || code.size() > 9 || phone.empty() || !std::all_of(code.begin(), code.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)); }))
+        throw BadRequest(notFound);
+    Order* o = findOrderById(std::stoi(code));
+    if (!o || o->phone.empty() || o->phone != phone) throw BadRequest(notFound);
+    if (act != "receive" && act != "dispute") throw BadRequest("Hành động không hợp lệ");
+    std::string why = Flow::check(o->status, act, Auth::B_CUSTOMER);
+    if (!why.empty()) throw Conflict(why);
+    if (act == "receive") {
+        if (!completeReceipt(*o, "nguoi_nhan")) throw Conflict("Không xác nhận được đơn ở trạng thái '" + std::string(orderStatusName(o->status)) + "'");
+        logOrder("received", *o, "người nhận (tra cứu công khai)");
+        systemAudit("order.receive_public", std::to_string(o->id), "người nhận xác nhận qua trang tra cứu");
+        notify(accountOfShipper(shipperNameOf(o->shipper)), "order", o->id, "Đơn #" + std::to_string(o->id) + " đã được người nhận xác nhận. Cảm ơn bạn!");
+        return Json::object().set("ok", true).set("message", "Cảm ơn bạn! Đơn #" + std::to_string(o->id) + " đã hoàn tất.");
+    }
+    if (o->disputes >= MAX_DISPUTES) throw Conflict("Đơn này đã được báo chưa nhận " + std::to_string(MAX_DISPUTES) + " lần. Hãy liên hệ người gửi hoặc quản trị viên.");
+    if (!S.shift.reopenDelivery(o->id, S.orders)) throw Conflict("Không thể báo chưa nhận hàng lúc này");
+    ++o->disputes;
+    o->arrivedReal = 0;
+    logOrder("disputed", *o, "người nhận (tra cứu công khai)");
+    systemAudit("order.dispute_public", std::to_string(o->id), "người nhận báo chưa nhận được hàng");
+    notify(accountOfShipper(shipperNameOf(o->shipper)), "order", o->id, "Người nhận báo CHƯA nhận được đơn #" + std::to_string(o->id) + ". Hãy liên hệ người nhận rồi bấm “Đã giao tới” lại.");
+    notify(o->owner, "order", o->id, "Người nhận báo chưa nhận được đơn #" + std::to_string(o->id) + ", shipper sẽ liên hệ lại.");
+    notifyStaff("order", o->id, "Người nhận báo chưa nhận được đơn #" + std::to_string(o->id) + " dù shipper đã bấm giao tới");
+    mark(D_ORDERS);
+    return Json::object().set("ok", true).set("message", "Đã ghi nhận chưa nhận được hàng. Shipper sẽ liên hệ bạn.");
+}
+
+// Người nhận không phản hồi quá autoConfirmMinutes phút kể từ lúc shipper giao tới thì đơn tự hoàn tất (shipper không bị treo tiền)
+void autoCompleteArrived() {
+    const int wait = Commerce::config().autoConfirmMinutes;
+    if (wait <= 0) return;
+    const int64_t now = nowSeconds();
+    std::vector<int> due;
+    for (const Order& o : S.orders)
+        if (o.status == ARRIVED && o.arrivedReal > 0 && now - o.arrivedReal >= static_cast<int64_t>(wait) * 60) due.push_back(o.id);
+    for (int id : due) {
+        Order* o = findOrderById(id);
+        if (!o || o->status != ARRIVED) continue;
+        if (!completeReceipt(*o, "tu_dong", "Tự hoàn tất: người nhận không phản hồi sau " + std::to_string(wait) + " phút")) continue;
+        logOrder("auto_received", *o, std::to_string(wait) + " phút");
+        systemAudit("order.autoreceive", std::to_string(id), "người nhận không phản hồi sau " + std::to_string(wait) + " phút");
+        notify(o->owner, "order", id, "Đơn #" + std::to_string(id) + " đã tự hoàn tất vì không có phản hồi sau " + std::to_string(wait) + " phút kể từ lúc shipper giao tới. Nếu chưa nhận được hàng, hãy gửi khiếu nại.");
+    }
 }
 
 // Phí hoàn hàng (cùng công thức với Pricing::summarize): tỉ lệ hoàn × phần cước không gồm phí thu hộ, làm tròn lên 500 đ
@@ -510,7 +658,7 @@ Json requeueOrder(const httplib::Request& r) {
     std::string why = Flow::check(o.status, "requeue", actorBit());
     if (!why.empty()) throw Conflict(why);
     std::string phone = Auth::normalizePhone(str(r, "phone"));
-    if (!phone.empty() && !validPhone(phone)) throw Invalid("Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0", {{"phone", "10 chữ số, bắt đầu bằng 0"}});
+    if (!phone.empty() && !validPhone(phone)) throw Invalid("Số điện thoại phải bắt đầu bằng số 0 và gồm 10–11 chữ số", {{"phone", "Bắt đầu bằng 0, 10–11 chữ số"}});
     std::string note = trimmed(str(r, "note"));
     for (char& c : note)
         if (c == '#' || c == '\n' || c == '\r') c = '-';
@@ -521,7 +669,7 @@ Json requeueOrder(const httplib::Request& r) {
     S.shift.dropEmptyAutoTrips();
     o.tried.clear();   // lần giao lại: ai cũng được mời
     o.noShipperAt = 0;
-    o.searchSince = nowSeconds();
+    o.searchSince = nowSeconds(); o.opened = false;
     mark(D_ORDERS);
     audit("order.requeue", std::to_string(o.id), phone.empty() ? "" : "SĐT mới " + phone);
     if (isCustomer() && !Commerce::config().autoMatch) notifyStaff("order", o.id, "Khách " + S.me.displayName + " yêu cầu giao lại đơn #" + std::to_string(o.id));
@@ -574,7 +722,7 @@ Json timelineJson(const Order& o) {
         arr.push(Json::object().set("type", "created").set("at", static_cast<double>(o.createdAt)).set("t", Json())
                      .set("who", o.createdBy).set("detail", ""));
     // Khách không thấy việc hệ thống mời / bị từ chối / bỏ lỡ từng shipper (như app Grab chỉ báo "đang tìm tài xế")
-    static const std::set<std::string> hiddenFromCustomer = {"offered", "declined", "expired", "offer_withdrawn", "recalled", "released", "assigned"};
+    static const std::set<std::string> hiddenFromCustomer = {"offered", "declined", "expired", "offer_withdrawn", "recalled", "released", "assigned", "opened"};
     for (const ShiftEvent& e : S.shift.events())
         if (e.order == o.id && !(o.createdAt > 0 && e.type == "created") && !(isCustomer() && hiddenFromCustomer.count(e.type)))  // "Đặt đơn" đã có mốc giờ thật ở trên
             arr.push(Json::object().set("type", e.type).set("at", Json()).set("t", e.t)
@@ -627,7 +775,7 @@ Json orderDetailJson(const httplib::Request&, const Order& o, size_t index) {
     if (const Commerce::Review* rv = S.reviews.ofOrder(o.id))
         j.set("review", Json::object().set("stars", rv->stars).set("comment", rv->comment));
     // Khách xem được tên và SĐT shipper khi đơn đang trên đường
-    if (isCustomer() && o.status == ASSIGNED && o.shipper >= 0) {
+    if (isCustomer() && (o.status == ASSIGNED || o.status == ARRIVED) && o.shipper >= 0) {
         const Auth::Account* a = S.accounts.find(accountOfShipper(shipperNameOf(o.shipper)));
         j.set("carrierPhone", a ? a->phone : std::string());
     }
@@ -715,15 +863,24 @@ Json trackOrder(const httplib::Request& r) {
     steps.push(Json::object().set("type", "created").set("at", static_cast<double>(o->createdAt)));
     for (const ShiftEvent& e : S.shift.events())
         if (e.order == o->id && e.type != "created") steps.push(Json::object().set("type", e.type).set("t", e.t));
-    std::string ship = carrier.count(o->id) ? carrier[o->id] : "";
+    // Chỉ lộ tên shipper khi họ đã nhận đơn (đang chờ trả lời lời mời thì người ngoài không biết ai được mời, giả định 39)
+    std::string ship = carrier.count(o->id) && o->status != DISPATCHED ? carrier[o->id] : "";
     std::string first = ship.empty() ? "" : ship.substr(ship.rfind(' ') == std::string::npos ? 0 : ship.rfind(' ') + 1);
-    return Json::object().set("ok", true)
-        .set("order", Json::object().set("id", o->id).set("status", o->status).set("statusName", orderStatusName(o->status))
-                          .set("destination", nodeName(o->destination)).set("urgent", o->urgent)
-                          .set("carrier", first.empty() ? Json() : Json(first)).set("cod", static_cast<double>(o->cod))
-                          .set("collect", static_cast<double>(orderCollect(*o, feeFor(*o))))
-                          .set("deliveredReal", static_cast<double>(o->deliveredReal)))
-        .set("steps", steps);
+    Json ord = Json::object().set("id", o->id).set("status", o->status).set("statusName", orderStatusName(o->status))
+                   .set("destination", nodeName(o->destination)).set("urgent", o->urgent)
+                   .set("carrier", first.empty() ? Json() : Json(first)).set("cod", static_cast<double>(o->cod))
+                   .set("collect", static_cast<double>(orderCollect(*o, feeFor(*o))))
+                   .set("deliveredReal", static_cast<double>(o->deliveredReal))
+                   .set("arrivedReal", static_cast<double>(o->arrivedReal))
+                   .set("disputes", o->disputes);
+    // Người nhận (đúng SĐT trên đơn) xác nhận "Đã nhận hàng" / báo chưa nhận ngay tại đây khi shipper đã bấm "Đã giao tới"
+    {
+        const int wait = Commerce::config().autoConfirmMinutes;
+        ord.set("canConfirm", o->status == ARRIVED);
+        ord.set("canDispute", o->status == ARRIVED && o->disputes < MAX_DISPUTES);
+        ord.set("autoConfirmAt", o->status == ARRIVED && o->arrivedReal > 0 && wait > 0 ? Json(static_cast<double>(o->arrivedReal + static_cast<int64_t>(wait) * 60)) : Json());
+    }
+    return Json::object().set("ok", true).set("order", ord).set("steps", steps);
 }
 
 Json publicInfo() {
@@ -949,21 +1106,24 @@ Json dispatchAssign(const httplib::Request& r) {
         .set("message", "Đã phân công " + std::to_string(n) + " đơn cho " + name + (left ? ". " + std::to_string(left) + " đơn không xếp được (quá tải trọng / xe không tới được), vẫn ở hàng chờ" : ""));
 }
 
-// ------------------------------------------------------------ Ghép đơn tự động (kiểu Grab)
-// Đơn Chờ giao được mời cho shipper GẦN NHẤT: gần = thời gian chạy ngắn nhất từ chỗ shipper đang đứng tới kho lấy hàng
-// (Dijkstra theo thời gian, đúng loại xe, có tính giờ cao điểm). Shipper có số giây (offerSeconds) để nhận;
-// từ chối hoặc hết hạn thì mời người gần nhất kế tiếp, hết người thì báo khách để khách thử lại hoặc huỷ.
-// Lộ trình của chuyến vẫn do phương án "deadline" của Dispatcher lập (xuất phát từ kho, không quay về).
-void systemAudit(const std::string& action, const std::string& target, const std::string& detail = "") {
-    S.audit.add("hệ thống", "system", action, target, detail, nowSeconds());
-    mark(D_AUDIT);
-}
-
+// ------------------------------------------------------------ Đơn chờ nhận: ai bấm nhận trước thì giao đơn đó
+// Khi khách đặt đơn (hoặc đơn quay về hàng chờ), đơn hiện trên bảng "Đơn chờ nhận" của MỌI shipper đang sẵn sàng
+// (trừ shipper bị khách chặn). Shipper nào bấm "Nhận đơn" trước thì được giao: server xử lý từng yêu cầu một (khoá mutex)
+// nên chỉ một người nhận được, người bấm sau nhận lỗi 409 "đơn đã có shipper khác nhận". Mỗi shipper chỉ giữ một chuyến
+// tại một thời điểm. Lộ trình của chuyến vẫn do phương án "deadline" của Dispatcher lập (xuất phát từ kho, không quay về).
 bool alreadyTried(const Order& o, int si) { return std::find(o.tried.begin(), o.tried.end(), si) != o.tried.end(); }
 void markTried(Order& o, int si) {
     if (si >= 0 && !alreadyTried(o, si)) o.tried.push_back(si);
 }
-bool shipperEligible(int si) { return !S.shift.isAbsent(si) && shipperReady(si); }
+// Khách đã chặn shipper này (không bao giờ ghép lại)
+bool blockedFor(const Order& o, int si) { return !o.owner.empty() && S.prefs.isBlocked(o.owner, shipperNameOf(si)); }
+// Shipper đang giữ quá nhiều tiền mặt thu hộ: không mời đơn phải thu tiền cho tới khi nộp bớt (hạn mức ví tiền mặt kiểu Grab)
+bool codOverLimit(const Order& o, int si) {
+    const long long limit = Commerce::config().codHoldLimit;
+    if (limit <= 0) return false;
+    const long long collect = orderCollect(o, feeFor(o));
+    return collect > 0 && S.cod.held(shipperNameOf(si)) + collect > limit;
+}
 
 struct Approach {
     bool ok = false;
@@ -1010,44 +1170,38 @@ struct Candidate {
     int shipper = -1;
     Approach ap;
     double score = 0;
+    bool favorite = false;   // shipper khách yêu thích: được mời trước
 };
 
-// Shipper có thể được mời cho đơn này: sẵn sàng, không nghỉ, rảnh, chở nổi, chưa từ chối / bỏ lỡ đơn này.
-// Xếp theo: (điểm hiệu suất nếu bật) -> thời gian tới kho -> km -> điểm -> thứ tự trong đội xe.
-std::vector<Candidate> matchCandidates(const Order& o) {
-    std::vector<Candidate> out;
-    for (size_t i = 0; i < S.shippers.size(); ++i) {
-        int si = static_cast<int>(i);
-        if (!shipperEligible(si) || alreadyTried(o, si)) continue;
-        if (o.weight > S.shippers[i].capacity) continue;
-        if (S.shift.busy(si, S.orders)) continue;
-        Candidate c;
-        c.shipper = si;
-        c.ap = approachOf(shipperNode(si), S.shippers[i].vehicle);
-        if (!c.ap.ok) continue;
-        c.score = shipperScore(S.shippers[i].name);
-        out.push_back(c);
-    }
-    const bool byScore = Commerce::config().scoreAware;
-    std::stable_sort(out.begin(), out.end(), [byScore](const Candidate& a, const Candidate& b) {
-        if (byScore && a.score != b.score) return a.score > b.score;
-        if (std::abs(a.ap.minutes - b.ap.minutes) > 1e-9) return a.ap.minutes < b.ap.minutes;
-        if (std::abs(a.ap.km - b.ap.km) > 1e-9) return a.ap.km < b.ap.km;
-        if (a.score != b.score) return a.score > b.score;
-        return a.shipper < b.shipper;
-    });
-    return out;
+// Shipper này có nhận được đơn không? Rỗng = được; ngược lại là lý do (hiện trên nút Nhận đơn / trong lỗi 409).
+// busyCheck = false: bỏ qua việc shipper đang bận (dùng khi chỉ xét "còn ai có thể nhận đơn này không").
+std::string claimBlock(const Order& o, int si, bool busyCheck = true) {
+    if (S.shift.isAbsent(si)) return "Bạn đang được ghi nhận nghỉ đột xuất";
+    if (!shipperReady(si)) return "Bạn đang tạm nghỉ. Hãy bật “Sẵn sàng” để nhận đơn";
+    if (alreadyTried(o, si)) return "Bạn đã nhả đơn này";
+    if (codOverLimit(o, si)) return "Bạn đang giữ quá nhiều tiền mặt thu hộ. Hãy nộp bớt rồi nhận đơn thu tiền";
+    if (o.weight > S.shippers[si].capacity) return "Đơn nặng hơn tải trọng xe của bạn (" + std::to_string(static_cast<int>(S.shippers[si].capacity)) + " kg)";
+    if (busyCheck && S.shift.busy(si, S.orders)) return "Hãy giao xong đơn đang cầm trước khi nhận đơn mới";
+    return "";
 }
 
-// Còn shipper nào (kể cả đang bận) có thể được mời cho đơn này không?
+// Đơn đang mở cho shipper nhận?
+bool openForClaim(const Order& o) {
+    return Commerce::config().autoMatch && S.graph.hasNode(S.depot) && o.status == PENDING && (o.createdAt > 0 || o.searchSince > 0);
+}
+
+// Còn shipper nào (kể cả đang bận) có thể nhận đơn này không?
 bool anyoneLeft(const Order& o) {
-    for (size_t i = 0; i < S.shippers.size(); ++i)
-        if (shipperEligible(static_cast<int>(i)) && !alreadyTried(o, static_cast<int>(i)) && o.weight <= S.shippers[i].capacity) return true;
+    for (size_t i = 0; i < S.shippers.size(); ++i) {
+        const int si = static_cast<int>(i);
+        if (blockedFor(o, si)) continue;
+        if (claimBlock(o, si, false).empty()) return true;
+    }
     return false;
 }
 
-// Lập chuyến một đơn cho shipper và gửi lời mời. false nếu shipper này không giao nổi đơn (xe không tới được...).
-bool offerTo(Order& o, const Candidate& c) {
+// Lập chuyến một đơn cho shipper `c.shipper` (đã nhận đơn nên chuyến vào thẳng "Đang giao" ở bước sau). false nếu xe của họ không giao nổi đơn.
+bool buildClaimTrip(Order& o, const Candidate& c) {
     Pending pend;
     pend.orders.push_back(o);
     pend.idx.push_back(static_cast<int>(&o - &S.orders[0]));
@@ -1063,18 +1217,13 @@ bool offerTo(Order& o, const Candidate& c) {
     if (!any) return false;
     if (S.shift.apply(*chosen, pend.idx, S.orders, S.shippers, true, true) == 0) return false;
     Trip* t = S.shift.findTripMutable(S.shift.trips().back().id);
-    t->offerUntil = nowSeconds() + Commerce::config().offerSeconds;
+    t->offerUntil = 0;
     t->offerClock = clock;
     t->fromNode = c.ap.path.front();
     t->approach = c.ap.path;
     t->approachTimes = c.ap.times;
-    t->note = "Ghép tự động: shipper gần nhất (" + std::to_string(static_cast<int>(std::lround(c.ap.minutes))) + " phút tới kho)";
+    t->note = "Nhận từ bảng đơn chờ (" + std::to_string(static_cast<int>(std::lround(c.ap.minutes))) + " phút tới kho)";
     o.noShipperAt = 0;
-    const std::string name = S.shippers[c.shipper].name;
-    S.shift.log(clock, "offered", o.id, c.shipper, std::to_string(static_cast<int>(std::lround(c.ap.minutes))) + " phút tới kho");
-    notify(accountOfShipper(name), "trip", o.id,
-           "Đơn mới #" + std::to_string(o.id) + " gần bạn: lấy ở kho (" + std::to_string(static_cast<int>(std::lround(c.ap.minutes))) + " phút) rồi giao tới " + nodeName(o.destination) +
-               ". Hãy nhận trong " + std::to_string(Commerce::config().offerSeconds) + " giây");
     mark(D_ORDERS);
     return true;
 }
@@ -1087,28 +1236,35 @@ void notifyNoShipper(Order& o) {
     mark(D_ORDERS);
 }
 
-// Mời đơn cho shipper gần nhất còn phù hợp. true nếu đã gửi được lời mời.
-bool matchOne(Order& o) {
-    for (const Candidate& c : matchCandidates(o)) {
-        if (offerTo(o, c)) return true;
-        markTried(o, c.shipper);   // xe này không bao giờ giao nổi đơn: không thử lại
-    }
-    if (!anyoneLeft(o)) notifyNoShipper(o);
-    return false;
-}
-
-// Ghép mọi đơn Chờ giao (đơn gấp, hạn sớm trước). Trả về số lời mời mới.
+// Báo đơn mới cho các shipper có thể nhận (mỗi lần đơn mở ra báo một lần). Không còn shipper nào nhận được thì báo khách.
+// Trả về số đơn vừa được báo.
 int matchPending() {
     if (!Commerce::config().autoMatch || !S.graph.hasNode(S.depot)) return 0;
     std::vector<int> ids;
     for (const Order& o : S.orders)
-        if (o.status == PENDING && (o.createdAt > 0 || o.searchSince > 0)) ids.push_back(o.id);   // đơn nhập từ file (chưa có giờ đặt) chờ quản trị viên phân công hoặc bấm “Tìm shipper”
+        if (openForClaim(o)) ids.push_back(o.id);   // đơn nhập từ file (chưa có giờ đặt) chờ quản trị viên phân công hoặc bấm “Tìm shipper”
     if (ids.empty()) return 0;
     std::stable_sort(ids.begin(), ids.end(), [](int a, int b) { return higherPriority(*findOrderById(a), *findOrderById(b)); });
     int n = 0;
     for (int id : ids) {
         Order* o = findOrderById(id);
-        if (o && o->status == PENDING && matchOne(*o)) ++n;
+        if (!o || o->status != PENDING) continue;
+        if (!anyoneLeft(*o)) {
+            notifyNoShipper(*o);
+            continue;
+        }
+        if (o->opened) continue;
+        o->opened = true;
+        o->noShipperAt = 0;
+        S.shift.log(S.shift.clock(), "opened", o->id, -1, "");
+        for (size_t i = 0; i < S.shippers.size(); ++i) {
+            const int si = static_cast<int>(i);
+            if (blockedFor(*o, si) || !claimBlock(*o, si, false).empty()) continue;
+            notify(accountOfShipper(S.shippers[i].name), "trip", o->id,
+                   "Có đơn mới #" + std::to_string(o->id) + (o->category.empty() ? std::string() : " (" + std::string(Commerce::categoryName(o->category)) + ")") + (o->urgent ? " HOẢ TỐC" : "") +
+                       " giao tới " + nodeName(o->destination) + ". Mở “Đơn chờ nhận” và bấm Nhận đơn: ai nhận trước thì giao.");
+        }
+        ++n;
     }
     return n;
 }
@@ -1125,30 +1281,32 @@ void withdrawOffers(int si, const std::string& why) {
         S.shift.decline(tid, S.orders, why);
         for (int oid : orders)
             if (Order* o = findOrderById(oid)) {
-                o->searchSince = nowSeconds();
+                o->searchSince = nowSeconds(); o->opened = false;
                 logOrder("offer_withdrawn", *o, why);
             }
     }
     if (!ids.empty()) mark(D_ORDERS);
 }
 
-// Lời mời quá hạn: coi như shipper bỏ lỡ, mời người kế tiếp
-void expireOffer(int tripId) {
-    const Trip* t = S.shift.findTrip(tripId);
-    if (!t) return;
-    const int si = t->shipper;
-    const std::string name = t->shipperName;
-    std::vector<int> orders;
-    for (const TripStop& st : t->stops) orders.push_back(st.orderId);
-    S.shift.decline(tripId, S.orders, "Hết thời gian trả lời");
-    for (int oid : orders)
-        if (Order* o = findOrderById(oid)) {
-            markTried(*o, si);
-            logOrder("expired", *o, name);
-            systemAudit("offer.expire", std::to_string(oid), name);
-        }
-    notify(accountOfShipper(name), "trip", 0, "Bạn đã bỏ lỡ lời mời #" + std::to_string(tripId) + " vì hết thời gian trả lời");
-    mark(D_ORDERS);
+// Nhả đơn đã nhận liên tiếp quá missLimit lần (không giao xong đơn nào giữa các lần) thì shipper tự chuyển sang Tạm nghỉ:
+// khách không phải chờ những shipper nhận rồi lại bỏ. Giao tới nơi một đơn hoặc tự bật lại "Sẵn sàng" thì đếm lại từ 0.
+void noteMiss(int si) {
+    const std::string name = shipperNameOf(si);
+    if (name.empty()) return;
+    const int limit = Commerce::config().missLimit;
+    int n = ++S.missStreak[name];
+    if (limit <= 0 || n < limit) return;
+    S.missStreak[name] = 0;
+    const std::string acc = accountOfShipper(name);
+    const Auth::Account* a = acc.empty() ? nullptr : S.accounts.find(acc);
+    if (!a || !a->ready) return;
+    S.accounts.setReady(acc, false);
+    mark(D_USERS);
+    if (S.authed && S.me.username == acc) S.me = *S.accounts.find(acc);
+    withdrawOffers(si, "Shipper tự chuyển sang tạm nghỉ");
+    systemAudit("shipper.autopause", acc, std::to_string(limit) + " lần nhả đơn liên tiếp");
+    notify(acc, "account", 0, "Bạn đã nhả đơn " + std::to_string(limit) +
+                                  " lần liên tiếp nên được chuyển sang Tạm nghỉ để đơn tới khách nhanh hơn. Bật lại “Sẵn sàng” khi bạn muốn nhận đơn.");
 }
 
 // Chờ quá lâu mà không ai nhận: hệ thống tự huỷ đơn (miễn phí) và báo khách
@@ -1183,7 +1341,7 @@ int runClockTo(double t) {
     return n;
 }
 
-// Chạy mỗi yêu cầu (trong wrap): đồng hồ ca nhích theo giờ thật, lời mời quá hạn, đơn chờ quá lâu, ghép đơn (tối đa 1 lần / 2 giây)
+// Chạy mỗi yêu cầu (trong wrap): đồng hồ ca nhích theo giờ thật, đơn chờ xác nhận quá hạn tự hoàn tất, đơn chờ quá lâu, báo đơn mới (tối đa 1 lần / 2 giây)
 void liveTick() {
     const int64_t now = nowSeconds();
     const Commerce::Config& cfg = Commerce::config();
@@ -1191,10 +1349,7 @@ void liveTick() {
     const int64_t dt = std::min<int64_t>(std::max<int64_t>(0, now - S.lastTick), 600);
     S.lastTick = now;
     if (cfg.clockSpeed > 0 && dt > 0 && S.shift.active()) runClockTo(S.shift.clock() + dt * cfg.clockSpeed / 60.0);
-    std::vector<int> expired;
-    for (const Trip& t : S.shift.trips())
-        if (!t.accepted && t.offerUntil > 0 && now >= t.offerUntil) expired.push_back(t.id);
-    for (int id : expired) expireOffer(id);
+    autoCompleteArrived();   // người nhận không phản hồi quá hạn: đơn tự hoàn tất
     if (cfg.matchGiveUp > 0) {
         std::vector<int> stale;
         for (const Order& o : S.orders)
@@ -1202,30 +1357,30 @@ void liveTick() {
         for (int id : stale)
             if (Order* o = findOrderById(id)) giveUpOrder(*o);
     }
-    if (!expired.empty() || now - S.lastMatch >= 2) {
+    if (now - S.lastMatch >= 2) {
         S.lastMatch = now;
         matchPending();
     }
 }
 
-// Khách bấm “Tìm lại”: xoá danh sách đã từ chối, mời lại từ đầu
+// Khách bấm “Tìm lại”: xoá danh sách shipper đã nhả đơn, báo lại cho mọi shipper
 Json retryOrder(const httplib::Request& r) {
     Order& o = orderForActor(integer(r, "id"));
     if (o.status != PENDING) throw Conflict("Chỉ tìm lại được shipper cho đơn đang ở 'Chờ giao' (đơn " + std::to_string(o.id) + " đang ở '" + orderStatusName(o.status) + "')");
     o.tried.clear();
     o.noShipperAt = 0;
-    o.searchSince = nowSeconds();
+    o.searchSince = nowSeconds(); o.opened = false;
     logOrder("retry", o, S.me.username);
     mark(D_ORDERS);
     audit("order.retry", std::to_string(o.id));
     int offers = matchPending();
     const Order& cur = *findOrderById(o.id);
-    return stateJson().set("message", cur.status == DISPATCHED ? "Đã gửi đơn " + std::to_string(o.id) + " cho shipper gần nhất"
-                                      : offers ? "Đang tìm shipper cho đơn " + std::to_string(o.id)
-                                               : "Chưa có shipper rảnh, hệ thống sẽ tiếp tục tìm cho đơn " + std::to_string(o.id));
+    (void)cur;
+    return stateJson().set("message", offers ? "Đã báo đơn " + std::to_string(o.id) + " cho các shipper đang sẵn sàng: ai nhận trước sẽ giao"
+                                             : "Chưa có shipper nào nhận được, đơn " + std::to_string(o.id) + " vẫn nằm trên bảng đơn chờ nhận");
 }
 
-// Shipper nhả đơn đã nhận khi chưa lấy hàng (như tài xế Grab huỷ chuyến): đơn quay lại hàng chờ và được mời cho người khác
+// Shipper nhả đơn đã nhận khi chưa lấy hàng (như tài xế Grab huỷ chuyến): đơn quay lại bảng đơn chờ nhận cho shipper khác
 Json releaseOrder(const httplib::Request& r) {
     int id = integer(r, "id");
     Order& o = orderForActor(id);
@@ -1241,39 +1396,16 @@ Json releaseOrder(const httplib::Request& r) {
     S.shift.dropEmptyAutoTrips();
     markTried(o, ship);
     o.noShipperAt = 0;
-    o.searchSince = nowSeconds();
+    o.searchSince = nowSeconds(); o.opened = false;
     ++S.stats.at(S.me.link).declines;
+    noteMiss(ship);
     mark(D_STATS | D_ORDERS);
     logOrder("released", o, reason);
     audit("order.release", std::to_string(id), reason);
-    notify(o.owner, "order", id, "Shipper " + S.me.link + " không thể giao đơn #" + std::to_string(id) + ", hệ thống đang tìm shipper khác cho bạn");
+    notify(o.owner, "order", id, "Shipper " + S.me.link + " không thể giao đơn #" + std::to_string(id) + ", đơn đã được mở lại cho các shipper khác nhận");
     notifyStaff("order", id, S.me.link + " nhả đơn #" + std::to_string(id) + ": " + reason);
     matchPending();
-    return stateJson().set("message", "Đã nhả đơn " + std::to_string(id) + ", hệ thống sẽ tìm shipper khác");
-}
-
-// Shipper đánh giá khách sau khi giao xong (đánh giá hai chiều)
-Json rateCustomer(const httplib::Request& r) {
-    Order& o = orderForActor(integer(r, "id"));
-    if (o.shipper != myShipperIndex()) throw Forbidden("Đơn " + std::to_string(o.id) + " không do bạn giao");
-    if (o.status != DELIVERED) throw Conflict("Chỉ đánh giá được khách của đơn đã giao");
-    int stars = integer(r, "stars", 0);
-    if (stars < 1 || stars > 5) throw Invalid("Hãy chọn từ 1 đến 5 sao", {{"stars", "Chọn từ 1 đến 5 sao"}});
-    if (o.owner.empty()) throw Conflict("Đơn này không gắn với tài khoản khách hàng");
-    if (S.custReviews.ofOrder(o.id)) throw Conflict("Bạn đã đánh giá khách của đơn này");
-    Commerce::Review rv;
-    rv.order = o.id;
-    rv.customer = o.owner;
-    rv.shipper = S.me.link;
-    rv.stars = stars;
-    rv.comment = trimmed(str(r, "comment"));
-    rv.at = nowSeconds();
-    std::string e = S.custReviews.add(rv);
-    if (!e.empty()) throw BadRequest(e);
-    mark(D_CREVIEWS);
-    audit("order.rate_customer", std::to_string(o.id), std::to_string(stars) + " sao");
-    notify(o.owner, "order", o.id, "Shipper " + S.me.link + " đánh giá bạn " + std::to_string(stars) + " sao cho đơn #" + std::to_string(o.id));
-    return stateJson().set("message", "Cảm ơn bạn đã đánh giá khách hàng");
+    return stateJson().set("message", "Đã nhả đơn " + std::to_string(id) + ", đơn quay lại bảng đơn chờ nhận cho shipper khác");
 }
 
 // Quản trị viên thu hồi chuyến / lời mời shipper chưa nhận (shipper không phản hồi): đơn về Chờ giao, không tính là shipper từ chối
@@ -1292,7 +1424,7 @@ Json recallTrip(const httplib::Request& r) {
     mark(D_ORDERS);
     for (int oid : ids)
         if (Order* o = findOrderById(oid)) {
-            o->searchSince = nowSeconds();
+            o->searchSince = nowSeconds(); o->opened = false;
             logOrder("recalled", *o, reason);
         }
     audit("trip.recall", std::to_string(id), ship + ": " + reason);
@@ -1301,10 +1433,10 @@ Json recallTrip(const httplib::Request& r) {
     return stateJson().set("message", "Đã thu hồi chuyến " + std::to_string(id) + " của " + ship + ": " + std::to_string(n) + " đơn trở về hàng chờ");
 }
 
-Json acceptTrip(const httplib::Request& r) {
-    int id = integer(r, "id");
+// Nhận chuyến (chuyến do quản trị viên phân công tay, hoặc chuyến vừa lập khi shipper bấm Nhận đơn)
+Json acceptTripId(int id, bool claimed) {
     const Trip* t = S.shift.findTrip(id);
-    if (!t) throw BadRequest("Không có chuyến " + std::to_string(id) + " (lời mời có thể đã hết hạn hoặc bị thu hồi)");
+    if (!t) throw BadRequest("Không có chuyến " + std::to_string(id) + " (chuyến có thể đã bị thu hồi)");
     if (t->shipper != myShipperIndex()) throw Forbidden("Chuyến này không phải của bạn");
     std::vector<int> ids;
     for (const TripStop& s : t->stops) ids.push_back(s.orderId);
@@ -1315,13 +1447,91 @@ Json acceptTrip(const httplib::Request& r) {
     mark(D_STATS | D_ORDERS);
     for (int oid : ids)
         if (Order* o = findOrderById(oid)) {
-            logOrder("accepted", *o, S.me.link);
+            logOrder(claimed ? "claimed" : "accepted", *o, S.me.link);
             o->noShipperAt = 0;
             notify(o->owner, "order", oid, autoTrip ? S.me.link + " đã nhận đơn #" + std::to_string(oid) + " và đang tới kho lấy hàng"
                                                     : "Đơn #" + std::to_string(oid) + " đang được " + S.me.link + " giao tới bạn");
         }
-    audit("trip.accept", std::to_string(id), std::to_string(n) + " đơn");
+    audit(claimed ? "order.claim" : "trip.accept", std::to_string(claimed && !ids.empty() ? ids.front() : id), std::to_string(n) + " đơn");
     return stateJson().set("message", "Đã nhận chuyến " + std::to_string(id) + " (" + std::to_string(n) + " đơn)");
+}
+Json acceptTrip(const httplib::Request& r) { return acceptTripId(integer(r, "id"), false); }
+
+// Một đơn trên bảng "Đơn chờ nhận" của shipper đang đăng nhập
+Json openOrderRow(const Order& o, int si, const Approach& ap) {
+    const Pricing::Fee fee = feeFor(o);
+    const std::string block = claimBlock(o, si);
+    const int64_t since = o.searchSince > 0 ? o.searchSince : o.createdAt;
+    return Json::object()
+        .set("id", o.id)
+        .set("category", o.category).set("categoryName", Commerce::categoryName(o.category))
+        .set("weight", o.weight)
+        .set("urgent", o.urgent)
+        .set("deadline", o.deadline)
+        .set("destination", o.destination)
+        .set("destinationName", nodeName(o.destination))
+        .set("cod", static_cast<double>(o.cod))
+        .set("collect", static_cast<double>(orderCollect(o, fee)))
+        .set("earn", static_cast<double>(shipperEarning(o, fee)))
+        .set("waitSeconds", static_cast<double>(since > 0 ? std::max<int64_t>(0, nowSeconds() - since) : 0))
+        .set("approachMinutes", ap.ok ? Json(ap.minutes) : Json())
+        .set("favorite", !o.owner.empty() && S.prefs.isFavorite(o.owner, shipperNameOf(si)))
+        .set("canClaim", block.empty() && ap.ok)
+        .set("blockReason", block.empty() && !ap.ok ? Json("Không có đường từ chỗ bạn đang đứng tới kho") : block.empty() ? Json() : Json(block));
+}
+
+// GET /api/orders/open — bảng đơn chờ nhận của shipper: đơn gấp / hạn sớm trước, đơn của khách yêu thích bạn lên đầu
+Json openOrdersJson(const httplib::Request&) {
+    const int si = myShipperIndex();
+    if (si < 0) throw Forbidden("Chỉ shipper mới xem được bảng đơn chờ nhận");
+    Json arr = Json::array();
+    const bool on = Commerce::config().autoMatch;
+    if (on) {
+        std::vector<const Order*> list;
+        for (const Order& o : S.orders)
+            if (openForClaim(o) && !blockedFor(o, si)) list.push_back(&o);
+        std::stable_sort(list.begin(), list.end(), [si](const Order* a, const Order* b) {
+            const bool fa = !a->owner.empty() && S.prefs.isFavorite(a->owner, shipperNameOf(si));
+            const bool fb = !b->owner.empty() && S.prefs.isFavorite(b->owner, shipperNameOf(si));
+            if (fa != fb) return fa;
+            return higherPriority(*a, *b);
+        });
+        const Approach ap = approachOf(shipperNode(si), S.shippers[si].vehicle);   // cùng một điểm đứng cho mọi đơn: tính một lần
+        for (const Order* o : list) arr.push(openOrderRow(*o, si, ap));
+    }
+    return Json::object().set("ok", true).set("enabled", on).set("orders", arr)
+        .set("ready", shipperReady(si) && !S.shift.isAbsent(si)).set("busy", S.shift.busy(si, S.orders));
+}
+
+// POST /api/order/claim — shipper bấm Nhận đơn. Server xử lý từng yêu cầu một nên chỉ một shipper nhận được đơn;
+// người bấm sau nhận lỗi 409 kèm lý do (đã có người nhận, khách vừa huỷ, ...).
+Json claimOrder(const httplib::Request& r) {
+    const int si = myShipperIndex();
+    if (si < 0) throw Forbidden("Chỉ shipper mới nhận được đơn");
+    const int id = integer(r, "id");
+    Order* o = findOrderById(id);
+    if (!o) throw Conflict("Đơn " + std::to_string(id) + " không còn tồn tại");
+    if (o->status != PENDING) {
+        if (o->status == ASSIGNED || o->status == DISPATCHED || o->status == ARRIVED || o->status == DELIVERED || o->status == FAILED || o->status == RETURNED)
+            throw Conflict(o->shipper == si ? "Bạn đã nhận đơn " + std::to_string(id) + " rồi"
+                                            : "Rất tiếc, đơn " + std::to_string(id) + " vừa được shipper khác nhận trước bạn");
+        if (o->status == CANCELLED) throw Conflict("Đơn " + std::to_string(id) + " đã bị huỷ");
+        throw Conflict("Đơn " + std::to_string(id) + " chưa mở để nhận (đang ở '" + orderStatusName(o->status) + "')");
+    }
+    if (!Commerce::config().autoMatch) throw Conflict("Quản trị viên đang phân công đơn thủ công, chưa mở nhận đơn tự do");
+    if (!openForClaim(*o)) throw Conflict("Đơn " + std::to_string(id) + " chưa mở để nhận");
+    if (blockedFor(*o, si)) throw Conflict("Đơn " + std::to_string(id) + " không dành cho bạn");
+    std::string why = claimBlock(*o, si);
+    if (!why.empty()) throw Conflict(why);
+    Candidate c;
+    c.shipper = si;
+    c.ap = approachOf(shipperNode(si), S.shippers[si].vehicle);
+    if (!c.ap.ok) throw Conflict("Không có đường từ chỗ bạn đang đứng tới kho lấy hàng");
+    if (!buildClaimTrip(*o, c)) throw Conflict("Xe của bạn không giao được đơn " + std::to_string(id) + " (không tới được điểm giao hoặc quá tải)");
+    const int tripId = S.shift.trips().back().id;
+    Json res = acceptTripId(tripId, true);
+    res.set("message", "Bạn đã nhận đơn " + std::to_string(id) + ". Hãy tới kho lấy hàng rồi giao tới " + nodeName(S.orders[static_cast<size_t>(o - &S.orders[0])].destination));
+    return res;
 }
 
 Json declineTrip(const httplib::Request& r) {
@@ -1333,6 +1543,7 @@ Json declineTrip(const httplib::Request& r) {
     if (reason.size() < 3) throw Invalid("Hãy nhập lý do từ chối", {{"reason", "Hãy nhập lý do (ít nhất 3 ký tự)"}});
     std::vector<int> ids;
     for (const TripStop& s : t->stops) ids.push_back(s.orderId);
+    const bool autoOffer = t->fromNode >= 0;
     int n = S.shift.decline(id, S.orders, TextUtil::utf8Prefix(reason, 150));
     if (n < 0) throw Conflict("Chuyến đã được nhận, không từ chối được nữa");
     ++S.stats.at(S.me.link).declines;
@@ -1341,11 +1552,12 @@ Json declineTrip(const httplib::Request& r) {
     for (int oid : ids)
         if (Order* o = findOrderById(oid)) {
             markTried(*o, me);   // đơn này không mời lại shipper đã từ chối
-            o->searchSince = nowSeconds();
+            o->searchSince = nowSeconds(); o->opened = false;
             logOrder("declined", *o, reason);
         }
     if (!Commerce::config().autoMatch) notifyStaff("trip", 0, S.me.link + " từ chối chuyến " + std::to_string(id) + ": " + reason + ". " + std::to_string(n) + " đơn trở lại hàng chờ.");
     audit("trip.decline", std::to_string(id), reason);
+    if (autoOffer) noteMiss(me);
     matchPending();
     return stateJson().set("message", "Đã từ chối chuyến " + std::to_string(id));
 }
@@ -1376,7 +1588,7 @@ Json shiftAbsent(const httplib::Request& r) {
         if (Order* o = findOrderById(id); o && o->status == PENDING) {   // đơn quay về hàng chờ: tìm shipper khác, không mời lại người vừa nghỉ
             markTried(*o, i);
             o->noShipperAt = 0;
-            o->searchSince = nowSeconds();
+            o->searchSince = nowSeconds(); o->opened = false;
             notify(o->owner, "order", id, "Shipper phụ trách đơn #" + std::to_string(id) + " nghỉ đột xuất, hệ thống đang tìm shipper khác cho bạn");
         }
     mark(D_ORDERS);
@@ -1459,7 +1671,7 @@ Json statementSummary(const Billing::Statement& st) {
     return Json::object().set("balance", static_cast<double>(st.balance)).set("pending", static_cast<double>(st.pending))
         .set("available", static_cast<double>(st.available)).set("codTotal", static_cast<double>(st.codTotal))
         .set("fees", static_cast<double>(st.fees)).set("comps", static_cast<double>(st.comps))
-        .set("paidOut", static_cast<double>(st.paidOut)).set("collected", static_cast<double>(st.collected));
+        .set("paidOut", static_cast<double>(st.paidOut)).set("collected", static_cast<double>(st.collected)).set("tips", static_cast<double>(st.tips));
 }
 
 Json walletJson(const std::string& customer) {
@@ -1539,7 +1751,7 @@ std::string compensationBlock(const Order& o, const std::string& kind) {
     if (kind == "late") {
         if (o.status != DELIVERED || o.deadline < 0 || o.deliveredAt <= o.deadline + 1e-9) return "Đơn không giao trễ hạn nên không bồi thường trễ hạn";
     } else if (kind == "damaged" || kind == "lost") {
-        if (o.status != ASSIGNED && o.status != DELIVERED && o.status != FAILED && o.status != RETURNED)
+        if (o.status != ASSIGNED && o.status != ARRIVED && o.status != DELIVERED && o.status != FAILED && o.status != RETURNED)
             return "Hàng chưa rời kho (đơn đang '" + std::string(orderStatusName(o.status)) + "') nên chưa thể hư hỏng / thất lạc";
     } else if (kind != "other") {
         return "Loại bồi thường không hợp lệ";
@@ -1683,6 +1895,10 @@ Json updateConfig(const httplib::Request& r) {
     if (has(r, "offerSeconds")) cfg.offerSeconds = integer(r, "offerSeconds");
     if (has(r, "matchGiveUp")) cfg.matchGiveUp = integer(r, "matchGiveUp");
     if (has(r, "clockSpeed")) cfg.clockSpeed = num(r, "clockSpeed");
+    if (has(r, "missLimit") && !str(r, "missLimit").empty()) cfg.missLimit = integer(r, "missLimit");
+    if (has(r, "codHoldLimit") && !str(r, "codHoldLimit").empty()) cfg.codHoldLimit = static_cast<long long>(num(r, "codHoldLimit"));
+    if (has(r, "tipMax") && !str(r, "tipMax").empty()) cfg.tipMax = static_cast<long long>(num(r, "tipMax"));
+    if (has(r, "autoConfirmMinutes") && !str(r, "autoConfirmMinutes").empty()) cfg.autoConfirmMinutes = integer(r, "autoConfirmMinutes");
     if (has(r, "tiers")) {   // "Đồng:0:0,Bạc:5:0.03,..." (tên:số đơn tối thiểu:phần trăm giảm dạng thập phân)
         std::vector<Commerce::Tier> tiers;
         std::stringstream ss(str(r, "tiers"));
@@ -1724,11 +1940,13 @@ Json alertsJson(const std::vector<Pricing::Fee>& fees) {
     double cap = 0;
     for (size_t i = 0; i < S.shippers.size(); ++i)
         if (!S.shift.isAbsent(static_cast<int>(i))) cap = std::max(cap, S.shippers[i].capacity);
-    std::vector<int> lateRisk, stale, failed, urgent, heavy;
+    std::vector<int> lateRisk, stale, failed, urgent, heavy, awaiting, disputed;
     for (const Order& o : S.orders) {
         if (o.status == ASSIGNED && o.deadline >= 0 && o.eta > o.deadline + 1e-9) lateRisk.push_back(o.id);
         if (o.status == CREATED && o.createdAt > 0 && now - o.createdAt > 30 * 60) stale.push_back(o.id);
         if (o.status == FAILED) failed.push_back(o.id);
+        if (o.status == ARRIVED) awaiting.push_back(o.id);
+        if (o.status == ASSIGNED && o.disputes > 0) disputed.push_back(o.id);
         if (o.status == PENDING && o.urgent) urgent.push_back(o.id);
         if (o.status == PENDING && cap > 0 && o.weight > cap + 1e-9) heavy.push_back(o.id);
     }
@@ -1750,7 +1968,9 @@ Json alertsJson(const std::vector<Pricing::Fee>& fees) {
     add("warn", "failed", "đơn giao thất bại chờ quyết định giao lại / hoàn kho", failed, "queue");
     add("warn", "stale", "đơn mới chờ xác nhận quá 30 phút", stale, "queue");
     add("warn", "heavy", "đơn nặng hơn mọi xe đang có mặt, cần chia kiện", heavy, "queue");
-    add("info", "urgent", "đơn hoả tốc đang chờ điều phối", urgent, "dispatch");
+    add("warn", "disputed", "đơn người nhận báo chưa nhận được hàng dù shipper đã giao tới", disputed, "tracking");
+    add("info", "awaiting", "đơn shipper đã giao tới, chờ người nhận xác nhận", awaiting, "tracking");
+    add("info", "urgent", "đơn hoả tốc đang chờ shipper nhận", urgent, "dispatch");
     add("info", "trips", "chuyến chờ shipper nhận", waitingTrips, "tracking");
     add("info", "remit", "phiếu nộp COD chờ đối soát", remits, "cod");
     add("warn", "complaints", "khiếu nại mở quá 24 giờ", oldComplaints, "complaints");
@@ -1855,6 +2075,184 @@ Json reportJson() {
     return j;
 }
 
+// ------------------------------------------------------------ Nghiệp vụ kiểu Grab: tiền tip, trò chuyện, shipper yêu thích / bị chặn
+// Tiền tip: khách tặng shipper sau khi đơn giao thành công (một lần mỗi đơn, trong 7 ngày). Shipper nhận 100%, khoản tip trừ vào
+// ví đối soát của khách (như cước người gửi trả); số dư âm sau khi tip không được vượt hạn mức nợ phí.
+Json tipOrder(const httplib::Request& r) {
+    Order& o = orderForActor(integer(r, "id"));
+    if (o.owner != S.me.username) throw Forbidden("Đơn " + std::to_string(o.id) + " không thuộc quyền xem của bạn");
+    const Commerce::Config& cfg = Commerce::config();
+    if (cfg.tipMax <= 0) throw Conflict("Tính năng tip đang tắt");
+    if (o.status != DELIVERED) throw Conflict("Chỉ tip được cho đơn đã giao thành công");
+    const std::string ship = shipperNameOf(o.shipper);
+    if (ship.empty()) throw Conflict("Đơn này không có shipper để nhận tip");
+    if (S.ledger.tipOf(o.id)) throw Conflict("Bạn đã tip cho đơn này rồi");
+    const int64_t now = nowSeconds();
+    if (o.deliveredReal > 0 && now - o.deliveredReal > TIP_WINDOW) throw Conflict("Chỉ tip được trong 7 ngày sau khi giao");
+    double amount = num(r, "amount", 0);
+    if (std::floor(amount) != amount || amount < 1000 || amount > static_cast<double>(cfg.tipMax) || static_cast<long long>(amount) % 1000 != 0)
+        throw Invalid("Tiền tip từ 1.000 đ đến " + money(cfg.tipMax) + ", bội số 1.000 đ", {{"amount", "Từ 1.000 đ đến " + money(cfg.tipMax)}});
+    const long long tip = static_cast<long long>(amount);
+    if (cfg.debtLimit > 0) {
+        long long after = statementOf(o.owner, orderFees()).balance - tip;
+        if (-after > cfg.debtLimit)
+            throw Conflict("Ví của bạn không đủ để tip " + money(tip) + ": số dư sau khi tip là " + money(after) + ", vượt hạn mức nợ " + money(cfg.debtLimit) + ".");
+    }
+    std::string note = trimmed(str(r, "note"));
+    if (note.size() > 300) throw Invalid("Lời nhắn tối đa 100 ký tự", {{"note", "Tối đa 100 ký tự"}});
+    Billing::Tx tx;
+    tx.kind = "tip";
+    tx.customer = o.owner;
+    tx.amount = tip;
+    tx.at = now;
+    tx.by = S.me.username;
+    tx.order = o.id;
+    tx.ref = ship;
+    tx.note = note;
+    int txId = 0;
+    std::string e = S.ledger.add(tx, txId);
+    if (!e.empty()) throw BadRequest(e);
+    mark(D_LEDGER | D_ORDERS);
+    audit("order.tip", std::to_string(o.id), money(tip) + " cho " + ship);
+    notify(accountOfShipper(ship), "order", o.id, "Khách " + S.me.displayName + " tip " + money(tip) + " cho đơn #" + std::to_string(o.id) +
+                                                      (tx.note.empty() ? "" : ": “" + tx.note + "”"));
+    return stateJson().set("message", "Đã tip " + money(tip) + " cho " + ship + ". Cảm ơn bạn!");
+}
+
+// Trò chuyện trong đơn: khách (chủ đơn), shipper đang giữ đơn và quản trị viên (tổng đài) cùng xem. Gửi được khi đơn đang giao
+// hoặc giao thất bại chờ xử lý; đơn kết thúc thì chỉ còn đọc. Chống spam 20 tin / phút mỗi người.
+Order& chatOrder(int id) {
+    Order& o = orderForActor(id);
+    if (isShipper() && o.shipper != myShipperIndex()) throw Forbidden("Đơn " + std::to_string(id) + " không do bạn giao");
+    if (isCustomer() && o.owner != S.me.username) throw Forbidden("Đơn " + std::to_string(id) + " không thuộc quyền xem của bạn");
+    return o;
+}
+
+Json chatJson(const Order& o) {
+    Json arr = Json::array();
+    for (const Commerce::ChatMessage* m : S.chat.of(o.id)) {
+        std::string who;
+        if (m->role == 'A') who = "Tổng đài";
+        else if (m->role == 'S') {
+            const Auth::Account* a = S.accounts.find(m->from);
+            who = a ? (a->link.empty() ? a->displayName : a->link) : "Shipper";
+        } else who = ownerDisplay(m->from);
+        arr.push(Json::object().set("id", m->id).set("at", static_cast<double>(m->at)).set("role", std::string(1, m->role))
+                     .set("who", who).set("mine", m->from == S.me.username).set("text", m->text));
+    }
+    Json quick = Json::array();
+    if (isCustomer())
+        for (const char* q : {"Bạn tới chưa ạ?", "Mình đang xuống ngay", "Gọi mình khi tới nhé", "Để hàng ở bảo vệ giúp mình", "Cảm ơn bạn!"}) quick.push(q);
+    else if (isShipper())
+        for (const char* q : {"Mình đã lấy hàng, đang tới", "Mình tới rồi, bạn ra nhận giúp", "Đường kẹt, mình tới trễ vài phút", "Mình không gọi được bạn", "Cảm ơn bạn!"}) quick.push(q);
+    return Json::object().set("ok", true).set("order", o.id).set("open", chatOpen(o)).set("messages", arr).set("quick", quick)
+        .set("shipper", o.shipper >= 0 ? Json(shipperNameOf(o.shipper)) : Json()).set("customer", o.owner.empty() ? Json() : Json(ownerDisplay(o.owner)));
+}
+
+Json chatSend(const httplib::Request& r) {
+    Order& o = chatOrder(integer(r, "id"));
+    if (!chatOpen(o)) {
+        if (o.owner.empty()) throw Conflict("Đơn do quản trị viên tạo, không có tài khoản khách để nhắn tin");
+        throw Conflict(o.status == DELIVERED || o.status == RETURNED || o.status == CANCELLED
+                           ? "Đơn đã kết thúc, cuộc trò chuyện chỉ còn để xem"
+                           : "Chỉ nhắn tin được khi shipper đã nhận đơn");
+    }
+    const int64_t now = nowSeconds();
+    if (!S.limiter.allow("chat:" + S.me.username, now, 20, 60))
+        throw TooMany("Bạn gửi tin quá nhanh, hãy đợi một chút", S.limiter.retryAfter("chat:" + S.me.username, now, 60));
+    Commerce::ChatMessage m;
+    m.order = o.id;
+    m.at = now;
+    m.from = S.me.username;
+    m.role = isCustomer() ? 'C' : isShipper() ? 'S' : 'A';
+    m.text = str(r, "text");
+    int mid = 0;
+    std::string e = S.chat.add(m, mid);
+    if (!e.empty()) throw Invalid(e, {{"text", e}});
+    mark(D_CHAT);
+    const std::string shipAcc = accountOfShipper(shipperNameOf(o.shipper));
+    const std::string preview = TextUtil::utf8Prefix(S.chat.of(o.id).back()->text, 60);
+    if (m.role != 'C') notify(o.owner, "chat", o.id, (m.role == 'S' ? S.me.link : std::string("Tổng đài")) + " nhắn về đơn #" + std::to_string(o.id) + ": " + preview);
+    if (m.role != 'S') notify(shipAcc, "chat", o.id, (m.role == 'C' ? S.me.displayName : std::string("Tổng đài")) + " nhắn về đơn #" + std::to_string(o.id) + ": " + preview);
+    return chatJson(o).set("message", "Đã gửi");
+}
+
+// Shipper yêu thích / bị chặn: khách chỉ chọn được shipper đã từng nhận đơn của mình.
+// Yêu thích -> được mời trước khi rảnh và đủ điều kiện; chặn -> không bao giờ được ghép cho khách này nữa.
+std::vector<std::string> shippersServed(const std::string& customer) {
+    std::vector<std::string> out;
+    for (const Order& o : S.orders) {
+        if (o.owner != customer || o.shipper < 0) continue;
+        if (o.status != ASSIGNED && o.status != ARRIVED && o.status != DELIVERED && o.status != FAILED && o.status != RETURNED) continue;
+        std::string nm = shipperNameOf(o.shipper);
+        if (!nm.empty() && std::find(out.begin(), out.end(), nm) == out.end()) out.push_back(nm);
+    }
+    return out;
+}
+
+Json prefsJson() {
+    const std::string me = S.me.username;
+    auto row = [&](const std::string& nm) {
+        int idx = shipperIndexByName(nm), cnt = 0;
+        double avg = S.reviews.average(nm, &cnt);
+        return Json::object().set("name", nm).set("inFleet", idx >= 0)
+            .set("vehicle", idx >= 0 ? Json(vehicleName(S.shippers[idx].vehicle)) : Json())
+            .set("rating", cnt ? Json(avg) : Json()).set("ratings", cnt)
+            .set("favorite", S.prefs.isFavorite(me, nm)).set("blocked", S.prefs.isBlocked(me, nm));
+    };
+    Json fav = Json::array(), blk = Json::array(), served = Json::array();
+    for (const std::string& nm : S.prefs.favorites(me)) fav.push(row(nm));
+    for (const std::string& nm : S.prefs.blocked(me)) blk.push(row(nm));
+    for (const std::string& nm : shippersServed(me)) served.push(row(nm));
+    return Json::object().set("ok", true).set("favorites", fav).set("blocked", blk).set("served", served)
+        .set("max", static_cast<int>(Commerce::MAX_PREFS));
+}
+
+Json applyPref(const httplib::Request& r) {
+    const std::string me = S.me.username;
+    const std::string name = trimmed(str(r, "shipper"));
+    const std::string action = str(r, "action");
+    if (name.empty()) throw Invalid("Hãy chọn shipper", {{"shipper", "Chọn shipper"}});
+    if (action == "block" || action == "fav") {
+        std::vector<std::string> served = shippersServed(me);
+        if (std::find(served.begin(), served.end(), name) == served.end())
+            throw Forbidden("Bạn chỉ chọn được shipper đã từng nhận đơn của mình");
+    }
+    std::string e = S.prefs.apply(me, name, action);
+    if (!e.empty()) throw Conflict(e);
+    mark(D_PREFS);
+    audit("customer.shipper_pref", name, action);
+    int withdrawn = 0;
+    if (action == "block") {   // lời mời đang chờ shipper này trả lời cho đơn của khách: gỡ ngay rồi mời người khác
+        const int si = shipperIndexByName(name);
+        std::vector<int> trips;
+        for (const Trip& t : S.shift.trips()) {
+            if (t.shipper != si || t.accepted) continue;
+            for (const TripStop& st : t.stops)
+                if (const Order* o = findOrderById(st.orderId); o && o->owner == me) { trips.push_back(t.id); break; }
+        }
+        for (int tid : trips) {
+            const Trip* t = S.shift.findTrip(tid);
+            std::vector<int> ids;
+            for (const TripStop& st : t->stops) ids.push_back(st.orderId);
+            S.shift.decline(tid, S.orders, "Khách đã chặn shipper");
+            for (int oid : ids)
+                if (Order* o = findOrderById(oid)) {
+                    markTried(*o, si);
+                    o->searchSince = nowSeconds(); o->opened = false;
+                    logOrder("offer_withdrawn", *o, "Khách đã chặn shipper");
+                    ++withdrawn;
+                }
+        }
+        if (withdrawn) {
+            mark(D_ORDERS);
+            matchPending();
+        }
+    }
+    static const std::map<std::string, std::string> msg = {{"block", "Đã chặn "}, {"unblock", "Đã bỏ chặn "}, {"fav", "Đã thêm vào yêu thích: "}, {"unfav", "Đã bỏ yêu thích: "}};
+    return prefsJson().set("message", msg.at(action) + name + (withdrawn ? ". Lời mời đang chờ của shipper này đã được chuyển cho người khác" : ""));
+}
+
 // ------------------------------------------------------------ Đăng ký các tuyến
 void registerOrderRoutes(httplib::Server& svr) {
     routePost(svr, "/api/order/add", wrap([](const httplib::Request& r) { return createOrder(r); }));
@@ -1896,7 +2294,17 @@ void registerOrderRoutes(httplib::Server& svr) {
     routePost(svr, "/api/shift/cancel", wrap([](const httplib::Request& r) { return cancelOrder(r); }));   // tên cũ
     routePost(svr, "/api/order/deliver", wrap([](const httplib::Request& r) { return deliverOrder(r); }));
     routePost(svr, "/api/order/rate", wrap([](const httplib::Request& r) { return rateOrder(r); }));
-    routePost(svr, "/api/order/rate-customer", wrap([](const httplib::Request& r) { return rateCustomer(r); }));
+    routePost(svr, "/api/order/arrive", wrap([](const httplib::Request& r) { return arriveOrder(r); }));
+    routePost(svr, "/api/order/receive", wrap([](const httplib::Request& r) { return receiveOrder(r); }));
+    routePost(svr, "/api/order/dispute", wrap([](const httplib::Request& r) { return disputeOrder(r); }));
+    routePost(svr, "/api/order/claim", wrap([](const httplib::Request& r) { return claimOrder(r); }));
+    routeGet(svr, "/api/orders/open", wrap([](const httplib::Request& r) { return openOrdersJson(r); }));
+    routePost(svr, "/api/track/confirm", wrap([](const httplib::Request& r) { return trackConfirm(r); }));
+    routePost(svr, "/api/order/tip", wrap([](const httplib::Request& r) { return tipOrder(r); }));
+    routeGet(svr, "/api/order/chat", wrap([](const httplib::Request& r) { return chatJson(chatOrder(integer(r, "id"))); }));
+    routePost(svr, "/api/order/chat/send", wrap([](const httplib::Request& r) { return chatSend(r); }));
+    routeGet(svr, "/api/customer/shippers", wrap([](const httplib::Request&) { return prefsJson(); }));
+    routePost(svr, "/api/customer/shipper-pref", wrap([](const httplib::Request& r) { return applyPref(r); }));
     routePost(svr, "/api/order/retry", wrap([](const httplib::Request& r) { return retryOrder(r); }));
     routePost(svr, "/api/order/release", wrap([](const httplib::Request& r) { return releaseOrder(r); }));
     routePost(svr, "/api/shift/fail", wrap([](const httplib::Request& r) { return failOrder(r); }));
@@ -2060,10 +2468,18 @@ void registerOrderRoutes(httplib::Server& svr) {
     routeGet(svr, "/api/audit/export", [auditRows](const httplib::Request& req, httplib::Response& res) {
         std::lock_guard<std::mutex> lock(S.mtx);
         if (!authorize(req, res)) return;
+        std::string csv;
+        try {
+            csv = Support::AuditLog::csv(auditRows(req));   // lọc trước: tham số sai (vd from=abc) -> 400 thay vì lỗi máy chủ
+        } catch (const BadRequest& e) {
+            res.status = 400;
+            res.set_content(Json::object().set("ok", false).set("error", e.what()).dump(), "application/json; charset=utf-8");
+            return;
+        }
         audit("audit.export", "audit");
         flushDirty();
         res.set_header("Content-Disposition", "attachment; filename=\"audit.csv\"");
-        res.set_content(Support::AuditLog::csv(auditRows(req)), "text/csv; charset=utf-8");
+        res.set_content(csv, "text/csv; charset=utf-8");
     });
     routeGet(svr, "/api/reports/summary", wrap([](const httplib::Request&) { return reportJson(); }));
 }

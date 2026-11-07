@@ -56,21 +56,11 @@ struct Tree {
     long long relaxations = 0;      // số lần nới lỏng thành công
     long long heapOps = 0;          // số thao tác push/pop/decrease (hoặc số lần quét mảng)
     double micros = 0;              // thời gian chạy phần thuật toán (micro giây)
-    double heuristicScale = 0;      // A*: hệ số α của heuristic (0 = không dùng heuristic)
     bool negativeEdge = false;      // có cạnh trọng số âm -> kết quả có thể sai
     bool valid = false;             // source có tồn tại không
 };
 
 Tree dijkstra(const Graph& g, int source, Version version, const Options& opt = Options());
-
-// ------------------------------------ A* -------------------------------------
-// Tìm đường source -> target. Giống Dijkstra (Min-Heap tự cài) nhưng lấy ra đỉnh có
-// f(v) = dist[v] + h(v) nhỏ nhất, với h(v) = α × khoảng cách đường chim bay v -> target.
-// α = min trên mọi cạnh của (trọng số cạnh / đường chim bay giữa 2 đầu cạnh), nên
-// h(u) <= w(u,v) + h(v) (heuristic NHẤT QUÁN) với mọi tiêu chí và mọi dữ liệu:
-// A* luôn cho kết quả đúng như Dijkstra nhưng thường xét ít đỉnh hơn.
-// Cạnh âm -> α = 0 (A* thành Dijkstra). Giờ cao điểm chỉ làm cạnh chậm thêm nên h vẫn đúng.
-Tree astar(const Graph& g, int source, int target, const Options& opt = Options());
 
 // Khoảng cách đường chim bay (km) giữa 2 điểm theo vĩ độ / kinh độ (công thức haversine)
 double straightLineKm(const Node& a, const Node& b);

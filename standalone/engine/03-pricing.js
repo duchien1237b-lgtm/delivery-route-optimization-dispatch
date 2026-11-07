@@ -91,6 +91,7 @@ function summarize(orders, fees, trips, shipperCount) {
         s.revenue += r;
         break;
       }
+      case ARRIVED:
       case ASSIGNED: {
         f.expectedRevenue += fee.total;
         f.codOnRoute += cod;

@@ -342,7 +342,11 @@ function shipperStatsJson(name) {
     ratings: count,
     score: shipperScore(name),
     codHeld: S.cod.held(name),
-    codAwaiting: S.cod.awaiting(name)
+    codAwaiting: S.cod.awaiting(name),
+    codHoldLimit: CONFIG.codHoldLimit,
+    tips: S.ledger.all().filter((t) => t.kind === "tip" && t.ref === name).reduce((a, t) => a + t.amount, 0),
+    missStreak: S.missStreak.get(name) || 0,
+    missLimit: CONFIG.missLimit
   };
 }
 // ------------------------------------------------------------ Quản lý tài khoản (nhân viên)
@@ -545,7 +549,8 @@ function adminRemoveUser(r) {
     throw new BadRequest(e);
   S.sessions.revokeUser(user);
   S.addresses.removeOwner(user);
-  mark(D_USERS | D_ADDR);
+  S.prefs.removeCustomer(user);
+  mark(D_USERS | D_ADDR | D_PREFS);
   audit("user.remove", user);
   return { ok: true, message: "Đã xoá tài khoản " + user };
 }
@@ -633,6 +638,8 @@ POST("addresses/default", (r) => {
 POST("shipper/ready", (r) => {
   const ready = flag(r, "ready");
   S.accounts.setReady(S.me.username, ready);
+  if (ready)
+    S.missStreak.set(S.me.link, 0);
   mark(D_USERS);
   audit("shipper.ready", S.me.username, ready ? "sẵn sàng" : "tạm nghỉ");
   S.me = { ...S.accounts.find(S.me.username) };

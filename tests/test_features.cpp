@@ -3,7 +3,7 @@
 //   kẹt xe / đóng đường, Hoàn tác–Làm lại (2 ngăn xếp), Trie tìm điểm,
 //   K tuyến ngắn nhất (Yen), vận hành ca giao (áp dụng, giao, thất bại, giao lại),
 //   giờ cao điểm (Dijkstra / Bellman-Ford phụ thuộc thời gian, dự toán, điều phối),
-//   A*, mô phỏng từng bước (Trace), phương án điều phối theo hạn giao, bản đồ đô thị lớn.
+//   mô phỏng từng bước (Trace), phương án điều phối theo hạn giao, bản đồ đô thị lớn.
 // Chạy từ thư mục gốc repo (đọc data/*.txt).
 // ============================================================================
 #include "BellmanFord.h"
@@ -311,48 +311,9 @@ int main() {
              << viaCenter.minutes << "), ca 7:00 cham them " << delay << " phut\n";
     }
 
-    // ------------------------------------------------- A*
+    // ------------------------------------------------- Khoảng cách chim bay (haversine)
     {
-        Graph city;
-        CHECK(FileIO::loadMap("data/map_city.txt", city, err));
-        CHECK(city.nodeCount() == 2000 && Traversal::isConnected(city));
-        long long settledD = 0, settledA = 0;
-        for (const Graph* gp : {&g, &city})
-            for (Criterion crit : {Criterion::DISTANCE, Criterion::TIME, Criterion::COST})
-                for (Vehicle v : {MOTORBIKE, CAR, TRUCK, ANY_VEHICLE}) {
-                    vector<int> ids = gp->nodeIds();
-                    for (size_t k = 0; k < 12; ++k) {
-                        int a = ids[(k * 7919) % ids.size()], b = ids[(k * 104729 + 13) % ids.size()];
-                        Options o;
-                        o.criterion = crit;
-                        o.vehicle = v;
-                        o.target = b;
-                        Tree d = dijkstra(*gp, a, Version::MIN_HEAP, o);
-                        Tree s = astar(*gp, a, b, o);
-                        CHECK(d.dist[b] == s.dist[b] || near(d.dist[b], s.dist[b]));
-                        if (s.dist[b] != INF) {
-                            vector<int> p = getPath(s, b);
-                            CHECK(!p.empty() && p.front() == a && p.back() == b);
-                            PathInfo pi = describePath(*gp, p, v);
-                            double w = crit == Criterion::DISTANCE ? pi.km : crit == Criterion::TIME ? pi.minutes : pi.costK;
-                            CHECK(near(w, s.dist[b]));
-                        }
-                        CHECK(s.settleOrder.size() <= d.settleOrder.size());
-                        if (gp == &city) { settledD += (long long)d.settleOrder.size(); settledA += (long long)s.settleOrder.size(); }
-                    }
-                }
-        CHECK(settledA * 2 < settledD);   // trên bản đồ lớn A* xét ít hơn một nửa số đỉnh
-        // Giờ cao điểm: A* theo giờ trùng Dijkstra theo giờ
-        RushProfile rush;
-        Options o;
-        o.criterion = Criterion::TIME;
-        o.vehicle = CAR;
-        o.departAt = 7 * 60 + 30;
-        o.rush = &rush;
-        o.target = 8;
-        CHECK(near(astar(g, 0, 8, o).dist[8], dijkstra(g, 0, Version::MIN_HEAP, o).dist[8]));
         CHECK(near(straightLineKm(g.getNode(0), g.getNode(0)), 0));
-        cout << "A*: tren do thi 2000 diem xet " << settledA << " dinh, Dijkstra xet " << settledD << " dinh\n";
     }
 
     // ------------------------------------------------- Mô phỏng từng bước (Trace)
@@ -372,7 +333,7 @@ int main() {
                     CHECK(near(t.steps[i].extra, mn));
                     CHECK(t.steps[i - 1].container.front().first == t.steps[i].u);   // gốc heap
                 }
-            Trace::Result ta = Trace::run(g, "astar", 0, 8, crit, ANY_VEHICLE);
+            Trace::Result ta = Trace::run(g, "dijkstra", 0, 8, crit, ANY_VEHICLE);
             CHECK(ta.steps.back().type == "done" && near(ta.dist[8], full.dist[8]));
             Trace::Result tb = Trace::run(g, "bellman", 0, -1, crit, ANY_VEHICLE);
             BFResult bf = bellmanFord(g, 0, crit, ANY_VEHICLE);

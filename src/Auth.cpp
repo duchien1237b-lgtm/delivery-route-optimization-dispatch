@@ -266,7 +266,7 @@ std::string checkEmail(const std::string& e) {
 }
 
 std::string checkPhone(const std::string& p) {
-    if (!validPhone(p)) return "Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0";
+    if (!validPhone(p)) return "Số điện thoại phải bắt đầu bằng số 0 và gồm 10–11 chữ số";
     return "";
 }
 
@@ -903,9 +903,8 @@ const std::vector<Rule> RULES = {
     {"POST", "import/shippers", A, "Bản đồ & dữ liệu", "Nhập shippers.txt"},
     {"POST", "save", A, "Bản đồ & dữ liệu", "Lưu bản đồ và đơn hàng"},
     {"GET", "benchmark", A, "Bản đồ & dữ liệu", "Đo hiệu năng thuật toán"},
-    {"GET", "benchmark/p2p", A, "Bản đồ & dữ liệu", "Đo hiệu năng A* và Dijkstra"},
     // --- Tìm đường & phân tích (chỉ đọc)
-    {"GET", "path", B_USERS, "Tìm đường (chỉ đọc)", "Đường đi ngắn nhất (Dijkstra, A*, Bellman-Ford, BFS)"},
+    {"GET", "path", B_USERS, "Tìm đường (chỉ đọc)", "Đường đi ngắn nhất (Dijkstra, Bellman-Ford, BFS)"},
     {"GET", "kpaths", B_USERS, "Tìm đường (chỉ đọc)", "K tuyến ngắn nhất (Yen)"},
     {"GET", "estimate", B_USERS, "Tìm đường (chỉ đọc)", "Dự toán chuyến nhiều điểm"},
     {"GET", "timeprofile", B_USERS, "Tìm đường (chỉ đọc)", "Thời gian đi theo giờ xuất phát"},
@@ -919,6 +918,7 @@ const std::vector<Rule> RULES = {
     {"GET", "quote", ALL5, "Tìm đường (chỉ đọc)", "Báo giá cước (Dijkstra) — khách vãng lai dùng thử được"},
     {"GET", "public/info", ALL5, "Tìm đường (chỉ đọc)", "Thông tin công khai: điểm giao, biểu phí"},
     {"GET", "track", ALL5, "Tìm đường (chỉ đọc)", "Tra cứu đơn bằng mã đơn + SĐT người nhận"},
+    {"POST", "track/confirm", ALL5, "Đơn hàng", "Người nhận (không cần tài khoản) xác nhận “Đã nhận hàng” / báo chưa nhận bằng mã đơn + SĐT"},
     // --- Đơn hàng
     {"POST", "order/add", A | C, "Đơn hàng", "Tạo đơn"},
     {"POST", "orders/random", A, "Đơn hàng", "Tạo đơn mẫu ngẫu nhiên"},
@@ -931,9 +931,18 @@ const std::vector<Rule> RULES = {
     {"POST", "order/confirm", ST, "Đơn hàng", "Xác nhận đơn mới (Mới → Chờ giao)"},
     {"POST", "order/reject", ST, "Đơn hàng", "Từ chối đơn mới (kèm lý do)"},
     {"POST", "order/cancel", C | ST, "Đơn hàng", "Huỷ đơn (theo quy tắc và phí huỷ)"},
-    {"POST", "order/deliver", S | ST, "Đơn hàng", "Xác nhận đã giao bằng mã 4 số"},
+    {"POST", "order/claim", S, "Đơn hàng", "Shipper nhận đơn trên bảng đơn chờ (ai bấm trước được đơn)"},
+    {"GET", "orders/open", S, "Đơn hàng", "Bảng đơn chờ nhận của shipper"},
+    {"POST", "order/arrive", S | ST, "Đơn hàng", "Shipper báo “Đã giao tới” (thu đủ tiền nếu có COD), chờ người nhận xác nhận"},
+    {"POST", "order/receive", C | ST, "Đơn hàng", "Người nhận / khách xác nhận “Đã nhận hàng” để hoàn tất đơn"},
+    {"POST", "order/dispute", C, "Đơn hàng", "Người nhận báo “Chưa nhận được hàng” (đơn quay lại Đang giao)"},
+    {"POST", "order/deliver", ST, "Đơn hàng", "Quản trị viên xác nhận giao thay (bắt buộc ghi lý do)"},
     {"POST", "order/rate", C, "Đơn hàng", "Đánh giá shipper (1–5 sao)"},
-    {"POST", "order/rate-customer", S, "Đơn hàng", "Shipper đánh giá khách hàng (1–5 sao)"},
+    {"POST", "order/tip", C, "Đơn hàng", "Khách tip cho shipper sau khi giao (trừ vào ví)"},
+    {"GET", "order/chat", C | S | A, "Đơn hàng", "Xem trò chuyện trong đơn (khách, shipper, tổng đài)"},
+    {"POST", "order/chat/send", C | S | A, "Đơn hàng", "Nhắn tin trong đơn khi shipper đang giao"},
+    {"GET", "customer/shippers", C, "Hồ sơ", "Shipper yêu thích / bị chặn / đã từng giao"},
+    {"POST", "customer/shipper-pref", C, "Hồ sơ", "Thêm / bỏ shipper yêu thích, chặn / bỏ chặn shipper"},
     {"POST", "order/retry", C | ST, "Đơn hàng", "Tìm lại shipper cho đơn chưa có ai nhận"},
     {"POST", "order/release", S, "Đơn hàng", "Shipper nhả đơn đã nhận khi chưa lấy hàng (kèm lý do)"},
     {"GET", "orders/list", B_USERS, "Đơn hàng", "Danh sách đơn (tìm kiếm, lọc, sắp xếp, phân trang)"},

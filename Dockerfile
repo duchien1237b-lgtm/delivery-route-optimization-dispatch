@@ -13,4 +13,4 @@ COPY --from=build /app/delivery ./delivery
 COPY web ./web
 COPY data ./data
 EXPOSE 10000
-CMD ./delivery --host 0.0.0.0 --port ${PORT:-10000} --web web --data data
+CMD echo "window.GMAPS_KEY=\"${GOOGLE_MAPS_KEY:-}\";" > web/gmaps-key.js && ./delivery --host 0.0.0.0 --port ${PORT:-10000} --web web --data data

@@ -2,6 +2,7 @@
 // đổi mật khẩu, xem và đăng xuất từng thiết bị. Khách hàng: sổ địa chỉ (gắn với điểm trên bản đồ, có địa chỉ mặc định)
 // và hạng thành viên. Shipper: bật / tắt sẵn sàng, thông tin xe, thống kê cá nhân.
 import { api } from '../api.js';
+import { prefsSection } from '../grabx.js';
 import { escapeHtml } from '../store.js';
 import {
   $, fmt, money, when, guard, guardForm, toast, avatar, confirmBox, passwordInput, bindPasswordRules, normalizePhone,
@@ -105,13 +106,15 @@ function render() {
     <div>
       ${infoBlock(me)}
       ${passwordBlock()}
-      ${me.role === 'customer' ? `<div class="block">${tierLine(me)}</div>${addressBlock()}` : ''}
+      ${me.role === 'customer' ? `<div class="block">${tierLine(me)}</div>${addressBlock()}<div class="block"><h2>Shipper yêu thích &amp; đã chặn</h2><div id="p-prefs"><p class="empty">Đang tải…</p></div></div>` : ''}
       ${me.role === 'shipper' ? shipperBlock(me) : ''}
       ${sessionsBlock()}
     </div>`;
   accordionize(me);
   bind(me);
   drawMap();
+  const pf = root.querySelector('#p-prefs');
+  if (pf) prefsSection(pf, ctx.store);
 }
 
 // Mỗi khối trong hồ sơ thành một mục thu gọn được; chỉ khối chính mở sẵn (nhớ lựa chọn khi vẽ lại)

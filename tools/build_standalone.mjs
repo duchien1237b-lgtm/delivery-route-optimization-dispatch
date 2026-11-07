@@ -48,7 +48,7 @@ try {
   const banner = `<!--
   Hệ thống Tìm đường & Điều phối Giao hàng — Đề tài 08 (Cấu trúc dữ liệu & Giải thuật)
   Bản MỘT FILE: mở thẳng file này bằng trình duyệt, không cần cài đặt, không cần server.
-  Toàn bộ thuật toán (Dijkstra 3 phiên bản, A*, Dijkstra theo giờ cao điểm, Bellman-Ford, Yen,
+  Toàn bộ thuật toán (Dijkstra 3 phiên bản, Dijkstra theo giờ cao điểm, Bellman-Ford, Yen,
   BFS/DFS, Kosaraju, Tarjan (cầu, khớp), Kruskal + DSU, Prim, Floyd–Warshall, TSP Held-Karp,
   Nearest Neighbor, 2-opt, Cheapest Insertion, tìm kiếm cục bộ theo hạn giao, mô phỏng từng bước,
   Trie, Min-Heap, Undo/Redo 2 ngăn xếp...) cùng toàn bộ nghiệp vụ tài khoản, vai trò và đơn hàng

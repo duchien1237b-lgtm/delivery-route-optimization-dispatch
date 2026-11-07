@@ -1,6 +1,7 @@
 // Điểm khởi động giao diện: điều hướng giữa các trang, thanh trên, công cụ bản đồ.
 import { api, downloadText, setCsrf } from './api.js';
 import { MapView } from './mapview.js';
+import { initBaseMap } from './gmapsui.js';
 import { store, escapeHtml } from './store.js';
 import { $, $$, guard, toast, setShiftStart, showModal, initSegThumbs, avatar, ROUTE_COLORS, ROLE_COLOR, ROLE_LABEL, when, setViewer } from './ui.js';
 import { initAuth, showAuth, hideAuth } from './auth.js';
@@ -46,6 +47,7 @@ let me = null;
 const panel = $('#panel');
 
 const map = new MapView($('#map'), { tooltip: $('#tooltip'), hint: $('#map-hint'), legend: $('#legend') });
+initBaseMap({ map, stage: $('#stage'), toast });
 initSegThumbs();
 
 // Nhóm trên thanh chuyển trang: các nhóm cách nhau bằng vạch mảnh (vận hành | bản đồ & thuật toán | báo cáo | tiền & hỗ trợ)
@@ -468,7 +470,7 @@ $('#file-input').addEventListener('change', async (e) => {
 {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('map.layers') || '{}'); } catch { /* bỏ qua */ }
-  const layers = { routes: true, restricted: true, zone: false, ...saved };
+  const layers = { routes: true, restricted: true, zone: false, graph: true, ...saved };
   const apply = () => {
     map.setLayers(layers);
     for (const b of $$('[data-layer]')) b.setAttribute('aria-pressed', String(!!layers[b.dataset.layer]));

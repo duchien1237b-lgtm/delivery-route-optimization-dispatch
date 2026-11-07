@@ -404,8 +404,8 @@ EDGES ${rows.length}
   return s;
 }
 // Trường tuỳ chọn khoá=giá_trị trong orders.txt (xem src/FileIO.h)
-var ORDER_KEYS = new Set(["cod", "sdt", "nhan", "kh", "ma", "ck", "tv", "gia", "ngay", "tao", "xn", "tt", "sh", "eta", "gx", "lan", "ly", "huy", "bc", "gt", "cu", "dc", "gtri", "bh", "kt", "tra", "hoan", "xong"]);
-var newOrderRecord = () => ({ id: 0, destination: 0, weight: 0, urgent: false, deadline: -1, note: "", cod: 0, phone: "", recipient: "", owner: "", promo: "", promoDiscount: 0, loyaltyDiscount: 0, gross: 0, createdAt: 0, createdBy: "", deliveryCode: "", status: 0, shipperName: "", eta: -1, deliveredAt: -1, attempts: 0, failReason: -1, cancelFee: 0, proofNote: "", deliveredReal: 0, codRecorded: false, address: 0, declaredValue: 0, insuranceFee: 0, dimL: 0, dimW: 0, dimH: 0, receiverPays: false, returnFee: 0, closedAt: 0 });
+var ORDER_KEYS = new Set(["cod", "sdt", "nhan", "kh", "ma", "ck", "tv", "gia", "ngay", "tao", "xn", "tt", "sh", "eta", "gx", "lan", "ly", "huy", "bc", "gt", "gd", "tc", "nn", "cu", "dc", "gtri", "bh", "kt", "tra", "hoan", "xong", "loai"]);
+var newOrderRecord = () => ({ id: 0, destination: 0, weight: 0, urgent: false, deadline: -1, note: "", cod: 0, phone: "", recipient: "", owner: "", promo: "", promoDiscount: 0, loyaltyDiscount: 0, gross: 0, createdAt: 0, createdBy: "", deliveryCode: "", status: 0, shipperName: "", eta: -1, deliveredAt: -1, attempts: 0, failReason: -1, cancelFee: 0, proofNote: "", deliveredReal: 0, arrivedReal: 0, disputes: 0, receivedBy: "", codRecorded: false, address: 0, declaredValue: 0, insuranceFee: 0, dimL: 0, dimW: 0, dimH: 0, receiverPays: false, returnFee: 0, closedAt: 0, category: "" });
 function loadOrdersText(text, g = null) {
   const result = [];
   const seen = new Set;
@@ -439,7 +439,7 @@ function loadOrdersText(text, g = null) {
       } else if (key === "sdt") {
         o.phone = val;
         if (!validPhone(o.phone))
-          throw new Error(`${at(l)}sdt= phai gom 10 chu so, bat dau bang 0`);
+          throw new Error(`${at(l)}sdt= phai bat dau bang 0 va gom 10-11 chu so`);
       } else if (key === "kh") {
         o.owner = val;
         if (!o.owner)
@@ -467,7 +467,7 @@ function loadOrdersText(text, g = null) {
           throw new Error(`${at(l)}xn= phai la ma 4 chu so`);
         o.deliveryCode = val;
       } else if (key === "tt")
-        o.status = number(7);
+        o.status = number(8);
       else if (key === "sh")
         o.shipperName = unscore(val);
       else if (key === "eta" || key === "gx") {
@@ -484,6 +484,12 @@ function loadOrdersText(text, g = null) {
         o.proofNote = unscore(val);
       else if (key === "gt")
         o.deliveredReal = number(9999999999);
+      else if (key === "gd")
+        o.arrivedReal = number(9999999999);
+      else if (key === "tc")
+        o.disputes = number(1000);
+      else if (key === "nn")
+        o.receivedBy = unscore(val);
       else if (key === "cu")
         o.codRecorded = val === "1";
       else if (key === "dc")
@@ -503,7 +509,11 @@ function loadOrdersText(text, g = null) {
         o.returnFee = number(1e9);
       else if (key === "xong")
         o.closedAt = number(9999999999);
-      else
+      else if (key === "loai") {
+        if (!["tailieu", "thucpham", "quanao", "dientu", "devo", "khac"].includes(val))
+          throw new Error(`${at(l)}loai= phai la tailieu, thucpham, quanao, dientu, devo hoac khac`);
+        o.category = val;
+      } else
         break;
       rest = sp < 0 ? "" : rest.slice(sp + 1).trim();
     }
@@ -525,7 +535,7 @@ function loadOrdersText(text, g = null) {
   return result;
 }
 var MAX_COD = 50000000;
-var validPhone = (p) => /^0[0-9]{9}$/.test(p);
+var validPhone = (p) => /^0[0-9]{9,10}$/.test(p);
 function ordersToText(orders) {
   let s = `# Danh sach don hang
 # id  nut_dich  kg  gap(0/1)  han(phut, -1 = khong)  [khoa=gia_tri ...]  ghi_chu
@@ -577,6 +587,12 @@ function ordersToText(orders) {
       biz += ` bc=${score(o.proofNote)}`;
     if (o.deliveredReal)
       biz += ` gt=${o.deliveredReal}`;
+    if (o.arrivedReal)
+      biz += ` gd=${o.arrivedReal}`;
+    if (o.disputes)
+      biz += ` tc=${o.disputes}`;
+    if (o.receivedBy)
+      biz += ` nn=${score(o.receivedBy)}`;
     if (o.codRecorded)
       biz += " cu=1";
     if (o.address)
@@ -593,6 +609,8 @@ function ordersToText(orders) {
       biz += ` hoan=${o.returnFee}`;
     if (o.closedAt)
       biz += ` xong=${o.closedAt}`;
+    if (o.category)
+      biz += ` loai=${o.category}`;
     s += `${o.id} ${o.destination} ${fnum(o.weight)} ${o.urgent ? 1 : 0} ${o.deadline}${biz}${note ? " " + note : ""}
 `;
   }

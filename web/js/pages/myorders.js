@@ -1,5 +1,5 @@
 // Trang Đơn của tôi (vai trò khách hàng): tạo đơn từ sổ địa chỉ, nhập mã giảm giá, báo giá chi tiết ngay
-// (báo giá = hoá đơn: cùng một hàm tính ở server), theo dõi trạng thái, mã nhận hàng 4 số, huỷ đơn (báo trước phí huỷ),
+// (báo giá = hoá đơn: cùng một hàm tính ở server), theo dõi trạng thái, xác nhận đã nhận hàng, huỷ đơn (báo trước phí huỷ),
 // đánh giá shipper và khiếu nại. Server chỉ trả về đơn của chính tài khoản đang đăng nhập.
 // Kiểu Grab: đặt xong hệ thống tự tìm shipper gần nhất (khách chỉ thấy “đang tìm shipper”), có shipper nhận thì hiện thẻ tài xế
 // (tên, xe, biển số, điểm, gọi điện) và vị trí xe chạy trên bản đồ; chưa có ai nhận thì bấm “Tìm lại”; huỷ đơn phải chọn lý do.
@@ -11,7 +11,8 @@ import {
   $, fmt, money, when, guard, guardForm, toast, hhmm, getShiftStart, timeToMinutes, ROUTE_COLORS, tripPosition,
   pager, bindPager, debounce, normalizePhone, preserveFocus, statusChip, askReason, avatar, pickedUp, liveClock,
 } from '../ui.js';
-import { openOrder, redeliverDialog, returnDialog } from '../orders.js';
+import { openOrder, redeliverDialog, returnDialog, receiveOrder, disputeOrder } from '../orders.js';
+import { categoryFields, bindCategory, chatButton, prefButtons, bindGrabx, shareCodeButton } from '../grabx.js';
 
 let ctx, root;
 let showForm = false, dest = null, selected = null, group = 'all', q = '', sort = 'id:desc', page = 1;
@@ -25,12 +26,13 @@ const GROUPS = [
   { v: 'bad', label: 'Huỷ / hoàn', status: '4,5' },
 ];
 const SORTS = [{ v: 'id:desc', label: 'Mới nhất' }, { v: 'id:asc', label: 'Cũ nhất' }, { v: 'net:desc', label: 'Cước cao nhất' }, { v: 'status:asc', label: 'Theo trạng thái' }];
-const OPEN = [6, 0, 7, 1, 3];
+const OPEN = [6, 0, 7, 1, 8, 3];
 
 const autoMatch = () => !ctx.store.state.config || ctx.store.state.config.autoMatch !== false;
 function stepOf(o) {
   if (o.status === 2) return 4;
   if (o.status === 1 || o.status === 3) return 3;
+  if (o.status === 8) return 3;
   if (o.status === 0 || o.status === 7) return 2;
   return 1;
 }
@@ -49,8 +51,9 @@ function statusText(o) {
     case 0: case 7:
       if (o.noShipper) return 'Chưa có shipper nhận đơn';
       if (!searching(o)) return o.status === 0 && !o.attempts ? 'Đã xác nhận, chờ phân công shipper' : 'Đang chờ phân công shipper';
-      return o.attempts ? `Đang tìm shipper giao lại (lần ${o.attempts + 1})` : 'Đang tìm shipper gần nhất…';
+      return o.attempts ? `Đang tìm shipper giao lại (lần ${o.attempts + 1})` : 'Đang chờ shipper nhận đơn…';
     case 1: return onTheWay(o, st) ? `Shipper ${o.carrier || ''} đang giao, dự kiến ${fmt.clock(o.eta)}` : `Shipper ${o.carrier || ''} đang tới kho lấy hàng`;
+    case 8: return `Shipper ${o.carrier || ''} đã giao tới. Bạn nhận được hàng chưa?`;
     case 2: return `Đã giao lúc ${fmt.clock(o.deliveredAt)}${o.late ? ' (trễ hạn)' : ''}`;
     case 3: return 'Giao chưa thành công, đang chờ xử lý';
     case 4: return o.cancelFee ? `Đã huỷ, phí huỷ ${money(o.cancelFee)}` : 'Đã huỷ';
@@ -61,10 +64,10 @@ function statusText(o) {
 // Thẻ tài xế (kiểu Grab) sau khi shipper nhận đơn
 function carrierCard(o) {
   const c = o.carrierInfo;
-  if (!c || (o.status !== 1 && o.status !== 2)) return '';
+  if (!c || (o.status !== 1 && o.status !== 2 && o.status !== 8)) return '';
   return `<div class="carrier-card"><span class="ava-wrap">${avatar(c.name, '#1a6fe0', c.vehicleName)}</span>
     <div><b>${escapeHtml(c.name)}</b><small>${escapeHtml(c.vehicleName)}${c.plate ? ` · <span class="plate">${escapeHtml(c.plate)}</span>` : ''}${c.rating ? ` · ★ ${fmt.num(c.rating)} (${c.ratings})` : ' · shipper mới'}</small></div>
-    ${c.phone && o.status === 1 ? `<a class="btn small" href="tel:${escapeHtml(c.phone)}">Gọi</a>` : ''}</div>`;
+    ${c.phone && (o.status === 1 || o.status === 8) ? `<a class="btn small" href="tel:${escapeHtml(c.phone)}">Gọi</a>` : ''}</div>`;
 }
 const CANCEL_PRESETS = ['Đặt nhầm / sai địa chỉ', 'Chờ shipper quá lâu', 'Không còn nhu cầu gửi', 'Muốn đặt lại với thông tin khác'];
 async function cancelDialog(o) {
@@ -111,13 +114,14 @@ function formHtml(st) {
       <label class="field"><span>Điểm giao (hoặc bấm trên bản đồ)</span><select name="destination">${ctx.store.nodeOptions(dest, { includeEmpty: true, emptyLabel: 'Chọn điểm giao' })}</select></label>
       <div class="row">
         <label class="field"><span>Người nhận</span><input name="recipient" maxlength="60" placeholder="Chị Lan" autocomplete="off" value="${val('recipient')}"></label>
-        <label class="field"><span>Số điện thoại</span><input name="phone" type="tel" inputmode="numeric" maxlength="13" placeholder="0909123456" autocomplete="off" value="${val('phone')}"></label>
+        <label class="field"><span>Số điện thoại</span><input name="phone" type="tel" inputmode="numeric" maxlength="13" placeholder="0xxxxxxxxx" autocomplete="off" value="${val('phone')}"></label>
       </div>
     </div>
     <div class="row">
       <label class="field"><span>Khối lượng (kg)${maxKg ? ` <small class="muted">tối đa ${maxKg}</small>` : ''}</span><input name="weight" type="number" step="0.1" min="0.1"${maxKg ? ` max="${maxKg}"` : ''} value="${val('weight', '1')}" inputmode="decimal" required></label>
       <label class="field"><span>Giao trước (không bắt buộc)</span><input name="deadline" type="time" value="${dl}"></label>
     </div>
+    ${categoryFields(pre ? pre.category : '')}
     <fieldset class="dims-row"><legend>Kích thước kiện, cm <small class="muted">(không bắt buộc; hàng cồng kềnh tính theo cân quy đổi)</small></legend>
       <input name="length" type="number" min="1" max="300" step="1" inputmode="numeric" placeholder="Dài" aria-label="Dài (cm)" value="${escapeHtml(dims[0] || '')}">
       <span>×</span><input name="width" type="number" min="1" max="300" step="1" inputmode="numeric" placeholder="Rộng" aria-label="Rộng (cm)" value="${escapeHtml(dims[1] || '')}">
@@ -141,25 +145,30 @@ function formHtml(st) {
 function cardHtml(o) {
   const step = stepOf(o);
   const bad = o.status === 4 || o.status === 5;
-  const active = o.status === 7 || o.status === 1;
   const finding = searching(o);
   return `<article class="order-card ${o.id === selected ? 'sel' : ''}" data-id="${o.id}" data-node="${o.destination}">
     <header><b>Đơn ${o.id} · ${escapeHtml(o.recipient || o.destinationName)}</b>${statusChip(o)}</header>
-    <p>${escapeHtml(o.destinationName)} · ${fmt.num(o.weight)} kg${o.urgent ? ' · hoả tốc' : ''} · cước <b>${money(o.total)}</b>${o.insurance ? ' <small class="muted">(gồm bảo hiểm)</small>' : ''}${o.receiverPays ? ' <small class="chip">người nhận trả</small>' : ''}${o.promo ? ` <small class="chip ok">${escapeHtml(o.promo)}</small>` : ''}${o.cod ? ` · thu hộ ${money(o.cod)}` : ''}${o.returnFee ? ` · phí hoàn ${money(o.returnFee)}` : ''}</p>
+    <p>${escapeHtml(o.destinationName)} · ${o.categoryName ? `${escapeHtml(o.categoryName)} · ` : ''}${fmt.num(o.weight)} kg${o.urgent ? ' · hoả tốc' : ''} · cước <b>${money(o.total)}</b>${o.insurance ? ' <small class="muted">(gồm bảo hiểm)</small>' : ''}${o.receiverPays ? ' <small class="chip">người nhận trả</small>' : ''}${o.promo ? ` <small class="chip ok">${escapeHtml(o.promo)}</small>` : ''}${o.cod ? ` · thu hộ ${money(o.cod)}` : ''}${o.returnFee ? ` · phí hoàn ${money(o.returnFee)}` : ''}</p>
     <p><b data-status-text="${o.id}">${escapeHtml(statusText(o))}</b>${o.failReasonName && o.status !== 2 ? ` · <span class="bad">${escapeHtml(o.failReasonName)}</span>` : ''}</p>
-    ${finding ? '<div class="finding"><span class="radar" aria-hidden="true"><i></i><i></i><i></i></span><div><b>Đang tìm shipper gần bạn nhất</b><small>Hệ thống gửi đơn cho shipper gần kho nhất. Họ không nhận thì chuyển người kế tiếp.</small></div></div>' : ''}
+    ${finding ? '<div class="finding"><span class="radar" aria-hidden="true"><i></i><i></i><i></i></span><div><b>Đơn đang chờ shipper nhận</b><small>Đơn hiện trên bảng của mọi shipper đang sẵn sàng. Shipper nào bấm nhận trước sẽ giao đơn này.</small></div></div>' : ''}
     ${o.status === 0 && o.noShipper ? '<div class="finding none"><div><b>Chưa có shipper nhận đơn</b><small>Tất cả shipper phù hợp đang bận hoặc đã bỏ qua. Bạn có thể tìm lại hoặc huỷ đơn (không mất phí).</small></div></div>' : ''}
     ${carrierCard(o)}
-    ${active && o.code ? `<div class="code-inline">Mã nhận hàng <b>${escapeHtml(o.code)}</b> <small>đọc cho shipper khi nhận hàng</small></div>` : ''}
+    ${o.status === 8 ? `<div class="finding"><div><b>Shipper đã giao tới. Bạn đã nhận được hàng chưa?</b><small>Bấm “Đã nhận hàng” để hoàn tất đơn. Nếu chưa nhận được, hãy bấm “Chưa nhận được” để shipper liên hệ lại.</small></div></div>` : ''}
+    ${shareCodeButton(o) ? `<div class="code-row">${shareCodeButton(o)}</div>` : ''}
     <div class="timeline">${[1, 2, 3, 4].map((k) => `<i class="${bad ? (k === 1 ? 'on' : 'bad') : k <= step ? 'on' : ''}"></i>`).join('')}</div>
-    <div class="timeline-labels"><span>Đặt đơn</span><span>${autoMatch() ? 'Tìm shipper' : 'Xác nhận'}</span><span>Đang giao</span><span>${bad ? escapeHtml(o.statusName) : 'Đã giao'}</span></div>
+    <div class="timeline-labels"><span>Đặt đơn</span><span>${autoMatch() ? 'Chờ shipper nhận' : 'Xác nhận'}</span><span>Đang giao</span><span>${bad ? escapeHtml(o.statusName) : 'Đã giao'}</span></div>
     <div class="actions card-acts">
       <button class="btn small ghost" data-open="${o.id}">Chi tiết &amp; hoá đơn</button>
       ${o.status === 0 && o.noShipper ? `<button class="btn small primary" data-retry="${o.id}">Tìm lại shipper</button>` : ''}
       ${o.cancelFeeNow !== undefined ? `<button class="btn small ghost danger" data-cancel="${o.id}">Huỷ${o.cancelFeeNow ? ` (phí ${money(o.cancelFeeNow)})` : ''}</button>` : ''}
       ${o.status === 6 || (o.status === 0 && autoMatch()) ? `<button class="btn small ghost" data-edit="${o.id}">Sửa đơn</button>` : ''}
+      ${o.canReceive ? `<button class="btn small primary" data-receive="${o.id}">Đã nhận hàng</button>` : ''}
+      ${o.canDispute ? `<button class="btn small ghost danger" data-dispute="${o.id}">Chưa nhận được</button>` : ''}
       ${o.status === 3 ? `<button class="btn small" data-redeliver="${o.id}">Hẹn giao lại</button><button class="btn small ghost" data-return="${o.id}">Hoàn hàng</button>` : ''}
       ${o.status === 2 && !o.rated ? `<button class="btn small" data-open="${o.id}">Đánh giá ★</button>` : ''}
+      ${chatButton(o)}
+      ${o.canTip ? `<button class="btn small" data-tipo="${o.id}">Tip shipper</button>` : o.tip ? `<small class="chip ok">Đã tip ${money(o.tip)}</small>` : ''}
+      ${o.status === 2 || o.status === 5 ? prefButtons(o) : ''}
       ${o.status === 2 || o.status === 4 || o.status === 5 ? `<button class="btn small ghost" data-again="${o.id}">Đặt lại</button>` : ''}
     </div>
   </article>`;
@@ -188,7 +197,7 @@ function draw() {
     ${tierHtml(st.me)}
     <div class="tiles" style="margin-bottom:14px">
       <div class="tile"><b>${mine.filter((o) => [6, 0, 7, 3].includes(o.status)).length}</b><span>${autoMatch() ? 'đang tìm shipper / chờ xử lý' : 'chờ xử lý'}</span></div>
-      <div class="tile"><b>${mine.filter((o) => o.status === 1).length}</b><span>đang giao</span></div>
+      <div class="tile"><b>${mine.filter((o) => o.status === 1 || o.status === 8).length}</b><span>đang giao</span></div>
       <div class="tile"><b>${mine.filter((o) => o.status === 2).length}</b><span>đã giao</span></div>
       <div class="tile"><b>${money(codBack)}</b><span>thu hộ đã thu cho bạn</span></div>
     </div>
@@ -236,7 +245,10 @@ function bindList() {
   for (const b of root.querySelectorAll('[data-again]')) b.addEventListener('click', () => { const o = findListed(Number(b.dataset.again)); if (o) openForm(null, o); });
   for (const b of root.querySelectorAll('[data-redeliver]')) b.addEventListener('click', () => { const o = findListed(Number(b.dataset.redeliver)); if (o) redeliverDialog(o, ctx.store); });
   for (const b of root.querySelectorAll('[data-return]')) b.addEventListener('click', () => { const o = findListed(Number(b.dataset.return)); if (o) returnDialog(o, ctx.store); });
+  for (const b of root.querySelectorAll('[data-receive]')) b.addEventListener('click', () => { const o = findListed(Number(b.dataset.receive)); if (o) receiveOrder(o, ctx.store); });
+  for (const b of root.querySelectorAll('[data-dispute]')) b.addEventListener('click', () => { const o = findListed(Number(b.dataset.dispute)); if (o) disputeOrder(o, ctx.store); });
   for (const b of root.querySelectorAll('[data-cancel]')) b.addEventListener('click', () => { const o = findListed(Number(b.dataset.cancel)); if (o) cancelDialog(o); });
+  bindGrabx($('#m-listwrap', root), ctx.store, findListed);
   for (const b of root.querySelectorAll('[data-retry]')) b.addEventListener('click', () => guard(async () => {
     try { const res = await ctx.store.mutate('order/retry', { id: b.dataset.retry }); toast(res.message); }
     catch (e) { if (e.status !== 409) throw e; await ctx.store.refresh(); toast('Đơn của bạn đã được hệ thống gửi cho shipper'); }   // đơn vừa được ghép trong lúc trang chưa kịp cập nhật
@@ -259,10 +271,10 @@ function drawMap(st) {
     const tr = tripOf(focus, st);
     if (tr) {
       const color = ROUTE_COLORS[Math.max(0, tr.shipper) % ROUTE_COLORS.length];
-      if (tr.approach && tr.approach.length > 1) paths.push({ nodes: tr.approach, color, width: 4, opacity: 0.6, dash: '6 6', animate: false, arrows: true });
-      paths.push({ nodes: tr.path, color, width: 5, opacity: 0.5, animate: false, arrows: true });
+      if (tr.approach && tr.approach.length > 1) paths.push({ nodes: tr.approach, color, width: 4, opacity: 0.6, dash: '6 6', animate: false, arrows: true, geo: true, vehicle: tr.vehicleName });
+      paths.push({ nodes: tr.path, color, width: 5, opacity: 0.5, animate: false, arrows: true, geo: true, vehicle: tr.vehicleName });
       const pos = tripPosition(tr, liveClock(st), ctx.store.nodesById);
-      if (pos) markers.push({ lat: pos.lat, lon: pos.lon, color, label: (tr.name.trim().split(/\s+/).pop() || '?')[0].toUpperCase(), title: `Shipper ${tr.name}` });
+      if (pos) markers.push({ lat: pos.lat, lon: pos.lon, along: pos.along, color, label: (tr.name.trim().split(/\s+/).pop() || '?')[0].toUpperCase(), title: `Shipper ${tr.name}` });
     }
   } else if (focus && (focus.status === 0 || focus.status === 7) && !focus.noShipper) {
     const dep = ctx.store.nodesById.get(st.depot);
@@ -316,6 +328,7 @@ function bindForm() {
   for (const el of [f.weight, f.cod, f.promo, f.value, f.length, f.width, f.height]) el.addEventListener('input', debQuote);
   f.destination.addEventListener('change', () => { dest = f.destination.value === '' ? null : Number(f.destination.value); drawMap(ctx.store.state); });
   dest = Number(destOf()) || null;
+  bindCategory(f);
   quote();
   $('#m-cancel', root).addEventListener('click', () => { showForm = false; dest = null; editing = prefill = null; ctx.map.setHint(null); render(); });
   f.addEventListener('submit', (e) => {
@@ -325,7 +338,10 @@ function bindForm() {
       deadline = timeToMinutes(f.deadline.value) - getShiftStart();
       if (deadline < 0) { toast(`Giờ giao phải sau giờ bắt đầu ca (${hhmm(getShiftStart())})`, 'error'); return; }
     }
-    const params = { weight: f.weight.value, urgent: f.urgent.checked ? 1 : 0, deadline, cod: f.cod.value || 0, note: f.note.value.trim(), ...billingParams() };
+    if (!f.category.value) { toast('Hãy chọn loại hàng', 'error'); f.category.focus(); return; }
+    const catChanged = !editing || f.category.value !== (editing.category || 'khac');
+    if (catChanged && !f.pledge.checked) { toast('Hãy xác nhận hàng gửi không thuộc danh mục cấm', 'error'); f.pledge.focus(); return; }
+    const params = { weight: f.weight.value, urgent: f.urgent.checked ? 1 : 0, deadline, cod: f.cod.value || 0, note: f.note.value.trim(), category: f.category.value, pledge: f.pledge.checked ? 1 : 0, ...billingParams() };
     if (!editing) params.promo = f.promo.value.trim();
     if (f.address && f.address.value !== '0') params.address = f.address.value;
     else Object.assign(params, { destination: f.destination.value, recipient: f.recipient.value.trim(), phone: normalizePhone(f.phone.value) });

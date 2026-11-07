@@ -57,15 +57,21 @@ function configForm() {
       ${num('maxOpenOrders', 'Số đơn chưa xong tối đa mỗi khách', cfg.maxOpenOrders, { min: 1 })}
     </div>
     <label class="check"><input type="checkbox" name="scoreAware" ${cfg.scoreAware ? 'checked' : ''} ${isAdmin() ? '' : 'disabled'}> Điều phối ưu tiên shipper có điểm tin cậy cao (đúng hạn, đánh giá, ít từ chối)</label>
-    <label class="check"><input type="checkbox" name="autoDeliver" ${cfg.autoDeliver ? 'checked' : ''} ${isAdmin() ? '' : 'disabled'}> Chế độ mô phỏng: đồng hồ ca tự giao đơn, shipper không cần nhận chuyến / nhập mã</label>
+    <label class="check"><input type="checkbox" name="autoDeliver" ${cfg.autoDeliver ? 'checked' : ''} ${isAdmin() ? '' : 'disabled'}> Chế độ mô phỏng: đồng hồ ca tự giao đơn, shipper không cần nhận chuyến / báo giao tới</label>
     </section>
     <section class="cfg-sec" data-sec="match" ${tab === 'match' ? '' : 'hidden'}>
-    <h2>Ghép đơn tự động (kiểu Grab)</h2>
-    <label class="check"><input type="checkbox" name="autoMatch" ${cfg.autoMatch ? 'checked' : ''} ${isAdmin() ? '' : 'disabled'}> Đơn mới tự gửi lời mời cho shipper gần nhất; shipper nhận thì mới đi giao (tắt = quản trị viên xác nhận và phân công tay)</label>
+    <h2>Nhận đơn tự do (kiểu Grab)</h2>
+    <label class="check"><input type="checkbox" name="autoMatch" ${cfg.autoMatch ? 'checked' : ''} ${isAdmin() ? '' : 'disabled'}> Đơn mới hiện trên bảng “Đơn chờ nhận” cho mọi shipper; ai bấm nhận trước thì giao (tắt = quản trị viên xác nhận và phân công tay)</label>
     <div class="grid-3">
-      ${num('offerSeconds', 'Hạn trả lời lời mời', cfg.offerSeconds ?? 45, { min: 1, suffix: 'giây', hint: 'Hết hạn mà chưa nhận thì mời shipper gần tiếp theo (1–600)' })}
+      ${num('autoConfirmMinutes', 'Tự hoàn tất đơn sau', cfg.autoConfirmMinutes ?? 30, { min: 0, suffix: 'phút', hint: 'Shipper đã giao tới mà người nhận không bấm xác nhận; 0 = không tự hoàn tất, tối đa 1440' })}
       ${num('matchGiveUp', 'Tự huỷ khi không có shipper sau', cfg.matchGiveUp ?? 10, { min: 0, suffix: 'phút', hint: '0 = không tự huỷ; tối đa 240' })}
       ${num('clockSpeed', 'Tốc độ giờ ca', cfg.clockSpeed ?? 6, { step: 0.5, min: 0, suffix: '×', hint: 'Số phút ca trôi qua mỗi phút thật; 0 = đứng yên, tối đa 120' })}
+    </div>
+    <h2 style="margin-top:14px">Quy tắc shipper &amp; khách (kiểu Grab)</h2>
+    <div class="grid-3">
+      ${num('missLimit', 'Tự tạm nghỉ sau khi nhả', cfg.missLimit ?? 3, { min: 0, suffix: 'đơn', hint: 'Nhả đơn liên tiếp; 0 = tắt, tối đa 20' })}
+      ${num('codHoldLimit', 'Hạn mức tiền mặt shipper giữ', cfg.codHoldLimit ?? 5000000, { min: 0, step: 100000, suffix: 'đ', hint: 'Vượt mức thì không nhận đơn thu tiền tới khi nộp; 0 = không chặn' })}
+      ${num('tipMax', 'Tiền tip tối đa mỗi đơn', cfg.tipMax ?? 200000, { min: 0, step: 1000, suffix: 'đ', hint: 'Bội số 1.000 đ; 0 = tắt tip' })}
     </div>
     </section>
     <section class="cfg-sec" data-sec="tier" ${tab === 'tier' ? '' : 'hidden'}>
@@ -153,7 +159,7 @@ function bind() {
           cancelOnRoute: v('cancelOnRoute') / 100, shipperShare: v('shipperShare') / 100, maxOpenOrders: v('maxOpenOrders'),
           insRate: v('insRate') / 100, insThreshold: v('insThreshold'), volDivisor: v('volDivisor'), compMultiplier: v('compMultiplier'), debtLimit: v('debtLimit'),
           scoreAware: f.scoreAware.checked ? 1 : 0, autoMatch: f.autoMatch.checked ? 1 : 0,
-          offerSeconds: v('offerSeconds'), matchGiveUp: v('matchGiveUp'), clockSpeed: v('clockSpeed'), autoDeliver: f.autoDeliver.checked ? 1 : 0, tiers,
+          autoConfirmMinutes: v('autoConfirmMinutes'), matchGiveUp: v('matchGiveUp'), clockSpeed: v('clockSpeed'), missLimit: v('missLimit'), codHoldLimit: v('codHoldLimit'), tipMax: v('tipMax'), autoDeliver: f.autoDeliver.checked ? 1 : 0, tiers,
         });
         cfg = res;
         toast(res.message);

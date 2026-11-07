@@ -1,4 +1,4 @@
-// Trang Mô phỏng: chạy từng bước Dijkstra (Min-Heap tự cài), A*, BFS, DFS, Bellman-Ford.
+// Trang Mô phỏng: chạy từng bước Dijkstra (Min-Heap tự cài), BFS, DFS, Bellman-Ford.
 // Các bước do backend C++ ghi lại (module Trace); trang này chỉ phát lại: mã giả, nội dung
 // heap / hàng đợi / ngăn xếp, bảng dist–prev và hình ảnh trên bản đồ.
 import { api } from '../api.js';
@@ -15,7 +15,6 @@ let keyHandler = null;
 
 const ALGOS = [
   { v: 'dijkstra', label: 'Dijkstra' },
-  { v: 'astar', label: 'A*' },
   { v: 'bfs', label: 'BFS' },
   { v: 'dfs', label: 'DFS' },
   { v: 'bellman', label: 'Bellman-Ford' },
@@ -24,8 +23,8 @@ const SPEEDS = [{ v: '900', label: 'Chậm' }, { v: '450', label: 'Vừa' }, { v
 const CONTAINER = { heap: 'Min-Heap', queue: 'Hàng đợi', stack: 'Ngăn xếp' };
 
 const name = (id) => escapeHtml(ctx.store.name(id));
-const weighted = () => algo === 'dijkstra' || algo === 'astar' || algo === 'bellman';
-const needDst = () => algo === 'dijkstra' || algo === 'astar';
+const weighted = () => algo === 'dijkstra' || algo === 'bellman';
+const needDst = () => algo === 'dijkstra';
 const num = (v) => (v == null || !Number.isFinite(v) ? '∞' : fmt.num(v, 2));
 
 // ------------------------------------------------------------ Phát lại bước
@@ -114,11 +113,10 @@ function explain(s) {
     if (s.t === 'cycle') return `Sau V−1 vòng vẫn nới được cạnh ${u} → ${v}: <b style="color:var(--stop)">có chu trình âm</b>.`;
     return 'Xong.';
   }
-  const astar = A === 'astar';
-  if (s.t === 'init') return `dist[${u}] = 0, đưa ${u} vào heap${astar ? ` với khoá h = ${num(s.y)}` : ''}.`;
-  if (s.t === 'pop') return `Lấy ${u} khỏi gốc heap (khoá ${num(s.y)}${astar ? ` = g ${num(s.x)} + h ${num(s.y - s.x)}` : ''}). Chốt dist[${u}] = ${num(s.x)}.`;
+  if (s.t === 'init') return `dist[${u}] = 0, đưa ${u} vào heap.`;
+  if (s.t === 'pop') return `Lấy ${u} khỏi gốc heap (khoá ${num(s.y)}). Chốt dist[${u}] = ${num(s.x)}.`;
   if (s.t === 'found') return `Đã chốt điểm đến ${u}: dừng, khoảng cách ${num(s.x)}.`;
-  if (s.t === 'relax') return `Cạnh ${u} → ${v}: ${num(s.du)} + ${num(s.x - s.du)} = ${num(s.x)} &lt; ${num(s.old)} → cập nhật dist[${v}], ${Number.isFinite(s.old) ? 'giảm khoá' : 'đưa vào heap'}${astar ? ` (khoá ${num(s.x + s.y)})` : ''}.`;
+  if (s.t === 'relax') return `Cạnh ${u} → ${v}: ${num(s.du)} + ${num(s.x - s.du)} = ${num(s.x)} &lt; ${num(s.old)} → cập nhật dist[${v}], ${Number.isFinite(s.old) ? 'giảm khoá' : 'đưa vào heap'}.`;
   if (s.t === 'skip') return `Cạnh ${u} → ${v}: ${num(s.x)} ≥ ${num(s.y)}: bỏ qua.`;
   return state.found ? 'Đã tới điểm đến: xong.' : 'Heap rỗng: xong.';
 }
@@ -223,7 +221,6 @@ function syncForm() {
 
 async function load(btn) {
   if (src == null) return;
-  if (algo === 'astar' && dst == null) { ctx.map.setHint('Chọn điểm đến cho A*'); return; }
   stop();
   await guard(async () => {
     trace = await api.get('trace', { algo, src, dst: needDst() ? dst : undefined, criterion, vehicle });
@@ -231,7 +228,6 @@ async function load(btn) {
     state = null;
     $('#l-player', root).hidden = false;
     $('#l-container-title', root).textContent = CONTAINER[trace.container] || 'Vòng lặp';
-    $('#l-alpha', root).textContent = trace.algo === 'astar' ? `h = ${fmt.num(trace.alpha, 3)} × đường chim bay` : '';
     goTo(0);
     ctx.map.setHint(null);
   }, btn);
@@ -265,7 +261,6 @@ export default {
         <div class="block lab-player">
           <div class="split"><b id="l-step"></b><div style="width:170px">${segmented('speed', SPEEDS, speed)}</div></div>
           <p id="l-msg" class="lab-msg"></p>
-          <p class="muted" id="l-alpha" style="font-size:12px"></p>
           <input type="range" id="l-slider" min="0" value="0" aria-label="Bước">
           <div class="actions" style="margin-top:6px"><button class="btn small" id="l-first" title="Về đầu">⏮</button><button class="btn small" id="l-prev" title="Lùi (←)">◀</button><button class="btn primary small" id="l-play" style="min-width:76px">Chạy</button><button class="btn small" id="l-next" title="Tiếp (→)">▶</button><button class="btn small" id="l-last" title="Tới cuối">⏭</button></div>
         </div>

@@ -120,7 +120,7 @@ function runHeap(c, W, s, t, dist, prev, order, st) {
 }
 function dijkstra(g, source, version, opt = {}) {
   opt = { criterion: DISTANCE, vehicle: ANY_VEHICLE, target: -1, departAt: -1, rush: null, ...opt };
-  const tree = { source, dist: new Map, prev: new Map, settleOrder: [], relaxations: 0, heapOps: 0, micros: 0, negativeEdge: false, valid: false, heuristicScale: 0 };
+  const tree = { source, dist: new Map, prev: new Map, settleOrder: [], relaxations: 0, heapOps: 0, micros: 0, negativeEdge: false, valid: false };
   const c = compact(g, opt);
   tree.negativeEdge = c.negative;
   const n = c.ids.length;
@@ -161,72 +161,6 @@ function straightLineKm(a, b) {
   const dLat = (b.x - a.x) * rad, dLon = (b.y - a.y) * rad;
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.x * rad) * Math.cos(b.x * rad) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-function astar(g, source, target, opt = {}) {
-  opt = { criterion: DISTANCE, vehicle: ANY_VEHICLE, departAt: -1, rush: null, ...opt };
-  const tree = { source, dist: new Map, prev: new Map, settleOrder: [], relaxations: 0, heapOps: 0, micros: 0, negativeEdge: false, valid: false, heuristicScale: 0 };
-  const c = compact(g, opt);
-  tree.negativeEdge = c.negative;
-  const n = c.ids.length;
-  for (const id of c.ids) {
-    tree.dist.set(id, INF);
-    tree.prev.set(id, -1);
-  }
-  if (!g.hasNode(source) || !g.hasNode(target))
-    return tree;
-  tree.valid = true;
-  const node = c.ids.map((id) => g.getNode(id));
-  let alpha = INF;
-  outer:
-    for (let i = 0;i < n; i++)
-      for (const a of c.adj[i]) {
-        if (a[1] < 0) {
-          alpha = 0;
-          break outer;
-        }
-        const km = straightLineKm(node[i], node[a[0]]);
-        if (km > 0.000000001)
-          alpha = Math.min(alpha, a[1] / km);
-      }
-  if (alpha === INF)
-    alpha = 0;
-  tree.heuristicScale = alpha;
-  const s = c.index.get(source), t = c.index.get(target);
-  const h = node.map((nd) => alpha * straightLineKm(nd, node[t]));
-  const dist = new Float64Array(n).fill(INF);
-  const prev = new Int32Array(n).fill(-1);
-  const done = new Uint8Array(n);
-  const W = weigher(opt);
-  const start = now();
-  const heap = new IndexedMinHeap(n);
-  dist[s] = 0;
-  heap.pushOrDecrease(s, h[s]);
-  tree.heapOps++;
-  while (!heap.empty()) {
-    const [u] = heap.popMin();
-    tree.heapOps++;
-    done[u] = 1;
-    tree.settleOrder.push(c.ids[u]);
-    if (u === t)
-      break;
-    for (const a of c.adj[u]) {
-      const v = a[0];
-      const nd = dist[u] + W(a, dist[u]);
-      if (!done[v] && nd < dist[v]) {
-        dist[v] = nd;
-        prev[v] = u;
-        heap.pushOrDecrease(v, nd + h[v]);
-        tree.relaxations++;
-        tree.heapOps++;
-      }
-    }
-  }
-  tree.micros = (now() - start) * 1000;
-  for (let i = 0;i < n; i++) {
-    tree.dist.set(c.ids[i], dist[i]);
-    tree.prev.set(c.ids[i], prev[i] < 0 ? -1 : c.ids[prev[i]]);
-  }
-  return tree;
 }
 function getPath(t, dst) {
   if (!t.valid || !t.dist.has(dst) || t.dist.get(dst) === INF)

@@ -42,29 +42,12 @@ Step mk(const char* type, int line, int u = -1, int v = -1, double value = 0, do
     return s;
 }
 
-// ------------------------------------------------ Dijkstra / A* (Min-Heap)
-void heapSearch(const Graph& g, bool astar, int src, int dst, Criterion crit, Vehicle veh, Result& res, Recorder& rec) {
+// ------------------------------------------------ Dijkstra (Min-Heap)
+void heapSearch(const Graph& g, int src, int dst, Criterion crit, Vehicle veh, Result& res, Recorder& rec) {
     const std::vector<int> ids = g.nodeIds();
     const int n = static_cast<int>(ids.size());
     std::unordered_map<int, int> idx;
     for (int i = 0; i < n; ++i) idx[ids[i]] = i;
-
-    // h(v) giống ShortestPath::astar: α × đường chim bay
-    std::vector<double> h(n, 0);
-    if (astar && g.hasNode(dst)) {
-        double alpha = INF;
-        for (int i = 0; i < n && alpha > 0; ++i)
-            for (const Edge& e : g.neighbors(ids[i])) {
-                if (!vehicleAllowed(e, veh)) continue;
-                double w = edgeWeight(e, crit, veh);
-                if (w < 0) { alpha = 0; break; }
-                double km = ShortestPath::straightLineKm(g.getNode(ids[i]), g.getNode(e.to));
-                if (km > 1e-9) alpha = std::min(alpha, w / km);
-            }
-        if (alpha == INF) alpha = 0;
-        res.heuristicScale = alpha;
-        for (int i = 0; i < n; ++i) h[i] = alpha * ShortestPath::straightLineKm(g.getNode(ids[i]), g.getNode(dst));
-    }
 
     std::vector<double> dist(n, INF);
     std::vector<int> prev(n, -1);
@@ -81,8 +64,8 @@ void heapSearch(const Graph& g, bool astar, int src, int dst, Criterion crit, Ve
     const int s = idx[src];
     const int t = g.hasNode(dst) ? idx[dst] : -1;
     dist[s] = 0;
-    heap.pushOrDecrease(s, h[s]);
-    snap(mk("init", 0, src, -1, 0, h[s]));
+    heap.pushOrDecrease(s, 0);
+    snap(mk("init", 0, src, -1, 0, 0));
     while (!heap.empty()) {
         auto [u, key] = heap.popMin();
         done[u] = 1;
@@ -99,8 +82,8 @@ void heapSearch(const Graph& g, bool astar, int src, int dst, Criterion crit, Ve
             if (nd < dist[v]) {
                 dist[v] = nd;
                 prev[v] = u;
-                heap.pushOrDecrease(v, nd + h[v]);
-                snap(mk("relax", 6, ids[u], e.to, nd, h[v]));
+                heap.pushOrDecrease(v, nd);
+                snap(mk("relax", 6, ids[u], e.to, nd, 0));
             } else {
                 snap(mk("skip", 5, ids[u], e.to, nd, dist[v]));
             }
@@ -265,18 +248,17 @@ Result run(const Graph& g, const std::string& algo, int src, int dst, Criterion 
                       "for mỗi cạnh: nếu còn nới được → có chu trình âm"};
         bellman(g, src, crit, veh, res, rec);
     } else {
-        bool a = algo == "astar";
-        res.algo = a ? "astar" : "dijkstra";
+        res.algo = "dijkstra";
         res.containerKind = "heap";
-        res.pseudo = {a ? "dist[s] ← 0; heap.push(s, h(s))" : "dist[s] ← 0; heap.push(s, 0)",
+        res.pseudo = {"dist[s] ← 0; heap.push(s, 0)",
                       "while heap chưa rỗng:",
-                      a ? "    u ← heap.popMin()   // f = dist + h nhỏ nhất" : "    u ← heap.popMin()   // chốt dist[u]",
+                      "    u ← heap.popMin()   // chốt dist[u]",
                       "    if u = đích: dừng",
                       "    for mỗi cạnh (u, v, w), v chưa chốt:",
                       "        if dist[u] + w ≥ dist[v]: bỏ qua",
                       "        dist[v] ← dist[u] + w; prev[v] ← u",
-                      a ? "        heap.pushOrDecrease(v, dist[v] + h(v))" : "        heap.pushOrDecrease(v, dist[v])"};
-        heapSearch(g, a, src, dst, crit, veh, res, rec);
+                      "        heap.pushOrDecrease(v, dist[v])"};
+        heapSearch(g, src, dst, crit, veh, res, rec);
     }
     return res;
 }

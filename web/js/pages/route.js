@@ -2,6 +2,7 @@
 import { api } from '../api.js';
 import { escapeHtml } from '../store.js';
 import { $, fmt, guard, segmented, bindSegmented, segValue, VEHICLES, CRITERIA, hhmm, timeToMinutes, getShiftStart } from '../ui.js';
+import { fmtRoute } from '../gmaps.js';
 
 let ctx, root;
 let src = null, dst = null, vehicle = '0', criterion = 'distance', algo = 'heap';
@@ -12,10 +13,11 @@ let pickNext = 'src';
 let depart = null;     // giờ xuất phát (phút trong ngày) dùng cho giờ cao điểm
 let profile = null;    // thời gian đi theo giờ trong ngày (/api/timeprofile)
 let timer = null;
+let gres = null;      // kết quả tìm đường trên Google: {status: 'loading'|'ok'|'err', routes, pick, note}
+let gSeq = 0;
 
 const ALGOS = [
   { v: 'heap', label: 'Dijkstra, Min-Heap tự cài' },
-  { v: 'astar', label: 'A*, đường chim bay' },
   { v: 'stl', label: 'Dijkstra, std::priority_queue' },
   { v: 'array', label: 'Dijkstra, mảng O(V²)' },
   { v: 'bellman', label: 'Bellman-Ford' },
@@ -42,13 +44,22 @@ function drawMap() {
   if (dst != null) styles.set(dst, { pin: 'end', keep: true, label: true, tip: 'Điểm đến' });
   const r = result && result.result;
   const legend = [];
-  if (r && r.found && alts && alts.paths.length > 1) {
+  if (r && r.found && alts && alts.paths.length > 1 && !(gres && gres.status === 'ok')) {
     // Có tuyến thay thế: tuyến đang chọn vẽ đậm, các tuyến khác mảnh và đứt nét
     const paths = alts.paths.map((p, i) => (i === altPick ? null : { nodes: p.path, color: ALT_COLORS[i % 4], width: 4, dash: '7 6', opacity: 0.75, animate: false })).filter(Boolean);
     paths.push({ nodes: alts.paths[altPick].path, color: ALT_COLORS[altPick % 4], width: 7, arrows: true });
     ctx.map.setPaths(paths);
     ctx.map.setDim(true);
     alts.paths.forEach((p, i) => legend.push({ type: i === altPick ? 'line' : 'dash', color: ALT_COLORS[i % 4], label: `Tuyến ${i + 1}` }));
+  } else if (r && r.found && gres && gres.status === 'ok') {
+    // Google Maps: tuyến do Google chọn vẽ đậm trên phố thật; đường của thuật toán đồ án vẽ đứt nét để đối chiếu
+    const paths = gres.routes.map((g, i) => (i === gres.pick ? null : { pts: g.pts, color: 'var(--muted)', width: 4, dash: '7 6', opacity: 0.7, animate: false })).filter(Boolean);
+    paths.push({ nodes: r.path, color: 'var(--go)', width: 4, dash: '2 9', animate: false });
+    paths.push({ pts: gres.routes[gres.pick].pts, color: 'var(--road)', width: 7, arrows: true });
+    ctx.map.setPaths(paths);
+    ctx.map.setDim(true);
+    legend.push({ type: 'line', color: 'var(--road)', label: 'Đường đi thật (' + ctx.map.geo.label + ')', width: 5 });
+    legend.push({ type: 'dash', color: 'var(--go)', label: 'Đường của thuật toán đồ án' });
   } else if (r && r.found) {
     ctx.map.setPaths([{ nodes: r.path, color: 'var(--road)', width: 7, arrows: true }]);
     ctx.map.setDim(true);
@@ -136,7 +147,7 @@ function renderResult() {
     }).join('');
     altHtml = alts.paths.length > 1 ? `<div class="block"><div class="split"><h2>Tuyến thay thế</h2><span class="muted" style="font-size:12px">Yen, ${fmt.us(alts.micros)}</span></div><div class="alt-list">${cards}</div></div>` : '';
   }
-  box.innerHTML = `${main}${profileHtml()}${altHtml}
+  box.innerHTML = `${main}${googleHtml(r)}${profileHtml()}${altHtml}
     <div class="block"><h2>So sánh thuật toán</h2>
       <div class="table-wrap"><table class="data"><thead><tr><th>Thuật toán</th><th class="num">Kết quả</th><th class="num" title="Số đỉnh được chốt trước khi tới điểm đến">Đỉnh xét</th><th class="num">Thời gian</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>${est}`;
@@ -150,11 +161,59 @@ function renderResult() {
     $('#r-depart', root).value = hhmm(depart);
     run();
   });
+  box.querySelectorAll('[data-galt]').forEach((b) => b.addEventListener('click', () => {
+    gres.pick = Number(b.dataset.galt);
+    renderResult();
+    drawMap();
+  }));
   box.querySelectorAll('[data-alt]').forEach((b) => b.addEventListener('click', () => {
     altPick = Number(b.dataset.alt);
     box.querySelectorAll('[data-alt]').forEach((x) => x.classList.toggle('active', x === b));
     drawMap();
   }));
+}
+
+// Khối "Google Maps": đường ngắn nhất / nhanh nhất do Google tìm trên phố thật, đối chiếu với thuật toán của đồ án
+function googleHtml(r) {
+  if (!ctx.map.geo || !r.found || !gres) return '';
+  if (gres.status === 'loading') return `<div class="block google-card"><div class="split"><h2>${ctx.map.geo.label}</h2></div><p class="muted">Đang hỏi đường đi thật…</p></div>`;
+  if (gres.status === 'err') return `<div class="block google-card"><div class="split"><h2>${ctx.map.geo.label}</h2></div><div class="notice warn">${escapeHtml(gres.note)}</div></div>`;
+  const g = gres.routes[gres.pick];
+  const dKm = g.meters / 1000 - r.km;
+  const tag = criterion === 'time' ? 'Nhanh nhất' : 'Ngắn nhất';
+  const cards = gres.routes.length > 1 ? `<div class="alt-list">${gres.routes.map((x, i) => `<button type="button" class="alt-card ${i === gres.pick ? 'active' : ''}" data-galt="${i}" style="--c:${ALT_COLORS[i % 4]}"><span class="alt-head">Tuyến Google ${i + 1}</span><span class="alt-nums">${fmtRoute(x)}</span></button>`).join('')}</div>` : '';
+  return `<div class="block google-card">
+    <div class="split"><h2>${ctx.map.geo.label}</h2><span class="chip ok">Đường thật</span></div>
+    <div class="trip-hero"><div class="th-top"><b class="th-time">${Math.max(1, Math.round(g.seconds / 60))} phút</b><span class="th-km">(${fmt.km(g.meters / 1000)})</span><span class="chip ok th-tag">${tag}</span></div>
+      <p class="th-sub">So với thuật toán đồ án (${escapeHtml(r.name)}): ${fmt.km(r.km)}, ${fmt.min(r.minutes)}, chênh ${dKm >= 0 ? '+' : '−'}${fmt.km(Math.abs(dKm))}</p></div>
+    ${cards}
+    <p class="muted" style="font-size:12px;margin:8px 0 0">${criterion === 'cost' ? 'Google không có tiêu chí chi phí đường nên chọn tuyến ngắn nhất. ' : ''}Đường vẽ trên bản đồ là của Google; thuật toán đồ án chạy trên đồ thị ${fmt.num(ctx.store.state.graph.nodes.length)} điểm nên số liệu có thể khác.</p>
+  </div>`;
+}
+
+// Hỏi Google (không chặn giao diện); lỗi thì giữ nguyên kết quả Dijkstra
+async function askGoogle() {
+  const geo = ctx.map.geo, r = result && result.result;
+  const seq = ++gSeq;
+  gres = null;
+  if (!geo || !r || !r.found || geo.fatal) { if (geo && geo.fatal) { gres = { status: 'err', note: geo.fatal + '.' }; renderResult(); } return; }
+  const a = ctx.store.nodesById.get(src), b = ctx.store.nodesById.get(dst);
+  if (!a || !b) return;
+  gres = { status: 'loading' };
+  renderResult();
+  try {
+    const routes = await geo.best([a.x, a.y], [b.x, b.y], (VEHICLES[Number(vehicle)] || {}).label || '');
+    if (seq !== gSeq || !root) return;
+    const key = criterion === 'time' ? 'seconds' : 'meters';
+    let pick = 0;
+    routes.forEach((x, i) => { if (x[key] < routes[pick][key]) pick = i; });
+    gres = { status: 'ok', routes, pick };
+  } catch (e) {
+    if (seq !== gSeq || !root) return;
+    gres = { status: 'err', note: geo.fatal ? `${geo.fatal}.` : 'Chưa lấy được đường đi thật giữa hai điểm này. Đang dùng kết quả của thuật toán đồ án.' };
+  }
+  renderResult();
+  drawMap();
 }
 
 const rushOn = () => ctx.store.state.settings.rush.enabled;
@@ -239,6 +298,7 @@ async function run(btn) {
     renderResult();
     drawMap();
     hint();
+    askGoogle();
   }, btn);
 }
 
@@ -307,7 +367,7 @@ export default {
     if (src != null && !ctx.store.nodesById.has(src)) src = null;
     if (dst != null && !ctx.store.nodesById.has(dst)) dst = null;
     if (src == null && state.graph.nodes.length) src = state.depot;
-    result = null; estimate = null; alts = null; profile = null;
+    result = null; estimate = null; alts = null; profile = null; gres = null; gSeq++;
     const rc = $('#r-rush', root);
     if (rc) { rc.checked = rushOn(); $('#r-depart', root).disabled = !rushOn(); }
     syncSelects(); renderResult(); drawMap();

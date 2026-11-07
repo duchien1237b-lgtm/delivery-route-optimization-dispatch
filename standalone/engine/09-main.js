@@ -61,13 +61,14 @@ function init() {
   loadOptional("promos.txt", (t) => S.promos.loadText(t));
   loadOptional("addresses.txt", (t) => S.addresses.loadText(t));
   loadOptional("reviews.txt", (t) => S.reviews.loadText(t));
-  loadOptional("customer_reviews.txt", (t) => S.custReviews.loadText(t));
   loadOptional("stats.txt", (t) => S.stats.loadText(t));
   loadOptional("notifications.txt", (t) => S.notes.loadText(t));
   loadOptional("audit.txt", (t) => S.audit.loadText(t));
   loadOptional("complaints.txt", (t) => S.complaints.loadText(t));
   loadOptional("cod_ledger.txt", (t) => S.cod.loadText(t));
   loadOptional("customer_ledger.txt", (t) => S.ledger.loadText(t));
+  loadOptional("order_chat.txt", (t) => S.chat.loadText(t));
+  loadOptional("customer_prefs.txt", (t) => S.prefs.loadText(t));
   try {
     const t = fileText("shippers.txt");
     if (t == null)

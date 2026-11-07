@@ -55,7 +55,7 @@ var DATASETS = [
   { key: "hcm", title: "Nội thành TP.HCM", description: "14 điểm, đường hai chiều. Có đường cấm xe tải, cao tốc cấm xe máy và cụm Cần Giờ chưa có tuyến nối.", mapFile: "map.txt", ordersFile: "orders.txt" },
   { key: "oneway", title: "Quận 1: đường một chiều", description: "Đồ thị có hướng, một số tuyến đối tác trợ giá nên chi phí âm. Dijkstra sẽ cho kết quả sai, cần Bellman-Ford.", mapFile: "map_oneway.txt", ordersFile: "orders_oneway.txt" },
   { key: "negcycle", title: "Dữ liệu lỗi: chu trình âm", description: "Ba tuyến khuyến mãi chồng nhau tạo vòng lặp có tổng chi phí âm. Dùng để kiểm tra Bellman-Ford.", mapFile: "map_negcycle.txt", ordersFile: "" },
-  { key: "city", title: "Đô thị mô phỏng (2.000 điểm)", description: "Lưới 2.000 giao lộ, sông phía đông chỉ qua được ở 5 cây cầu, vành đai cấm xe máy, trung tâm cấm xe tải. Dùng để thử thuật toán trên đồ thị lớn: so A* với Dijkstra, điều phối 24 đơn.", mapFile: "map_city.txt", ordersFile: "orders_city.txt" },
+  { key: "city", title: "Đô thị mô phỏng (2.000 điểm)", description: "Lưới 2.000 giao lộ, sông phía đông chỉ qua được ở 5 cây cầu, vành đai cấm xe máy, trung tâm cấm xe tải. Dùng để thử thuật toán trên đồ thị lớn: đo 3 phiên bản Dijkstra, điều phối 24 đơn.", mapFile: "map_city.txt", ordersFile: "orders_city.txt" },
   { key: "saved", title: "Bản đồ đã lưu", description: "Bản đồ và đơn hàng bạn đã lưu bằng nút Lưu (lưu trong trình duyệt này).", mapFile: "my_map.txt", ordersFile: "my_orders.txt" }
 ];
 // ============================== Trạng thái app ==============================
@@ -88,7 +88,6 @@ var S = {
   promos: new PromoStore,
   addresses: new AddressBook,
   reviews: new ReviewStore,
-  custReviews: new ReviewStore,
   // shipper đánh giá khách (đánh giá hai chiều)
   stats: new StatsStore,
   notes: new NotificationStore,
@@ -97,6 +96,9 @@ var S = {
   complaints: new ComplaintStore,
   cod: new CodLedger,
   ledger: new CustomerLedger,
+  chat: new ChatStore,
+  prefs: new PrefStore,
+  missStreak: new Map,
   resets: new ResetStore,
   limiter: new RateLimiter,
   demo: true,
@@ -161,7 +163,7 @@ class NeedLogin extends HttpError {
     this.auth = true;
   }
 }
-var D_USERS = 1, D_PROMOS = 2, D_ADDR = 4, D_REVIEWS = 8, D_STATS = 16, D_NOTES = 32, D_AUDIT = 64, D_COMPL = 128, D_COD = 256, D_CONFIG = 512, D_ORDERS = 1024, D_FLEET = 2048, D_LEDGER = 4096, D_CREVIEWS = 8192;
+var D_USERS = 1, D_PROMOS = 2, D_ADDR = 4, D_REVIEWS = 8, D_STATS = 16, D_NOTES = 32, D_AUDIT = 64, D_COMPL = 128, D_COD = 256, D_CONFIG = 512, D_ORDERS = 1024, D_FLEET = 2048, D_LEDGER = 4096, D_CHAT = 16384, D_PREFS = 32768;
 var mark = (bits) => {
   S.dirty |= bits;
   ++S.rev;
@@ -377,7 +379,7 @@ var myShipperIndex = () => isShipper() ? shipperIndexByName(S.me.link) : -1;
 function shipperSees(o, idx) {
   if (idx < 0 || o.shipper !== idx)
     return false;
-  return o.status === DISPATCHED || o.status === ASSIGNED || o.status === DELIVERED || o.status === FAILED || o.status === RETURNED;
+  return o.status === DISPATCHED || o.status === ASSIGNED || o.status === ARRIVED || o.status === DELIVERED || o.status === FAILED || o.status === RETURNED;
 }
 function currentView() {
   const v = { all: true, shipper: -1, orders: new Set };
@@ -500,6 +502,9 @@ function cancelAllowedNow(o) {
     return false;
   return !(isCustomer() && o.status === ASSIGNED && pickedUp(o));
 }
+var TIP_WINDOW = 7 * 86400;
+// Trò chuyện khách <-> shipper mở khi shipper đã nhận đơn và đơn chưa kết thúc
+var chatOpen = (o) => o.shipper >= 0 && !!o.owner && (o.status === ASSIGNED || o.status === ARRIVED || o.status === FAILED);
 // Phần cước shipper nhận (cùng công thức với lúc ghi nhận đã giao)
 function shipperEarning(o, fee) {
   const part = fee.valid ? shippingPart(fee) : 0;
@@ -508,7 +513,7 @@ function shipperEarning(o, fee) {
 }
 // Một đơn dưới dạng JSON, đã lọc theo vai trò của người xem
 function orderRow(o, index, fee, unreachable, carrier) {
-  const late = o.deadline >= 0 && (o.status === DELIVERED && o.deliveredAt > o.deadline + 0.000000001 || o.status === ASSIGNED && o.eta > o.deadline + 0.000000001);
+  const late = o.deadline >= 0 && ((o.status === DELIVERED || o.status === ARRIVED) && o.deliveredAt > o.deadline + 0.000000001 || o.status === ASSIGNED && o.eta > o.deadline + 0.000000001);
   const j = {
     status: o.status,
     statusName: orderStatusName(o.status),
@@ -547,6 +552,8 @@ function orderRow(o, index, fee, unreachable, carrier) {
     cancelFee: o.cancelFee,
     createdAt: o.createdAt,
     deliveredReal: o.deliveredReal,
+    arrivedReal: o.arrivedReal || 0,
+    disputes: o.disputes || 0,
     reachable: !unreachable.has(o.destination)
   };
   if (!isShipper()) {
@@ -556,18 +563,14 @@ function orderRow(o, index, fee, unreachable, carrier) {
   j.noShipper = o.status === PENDING && o.noShipperAt > 0;
   j.tried = o.tried.length;
   if (isCustomer() || isStaff()) {
-    const known = o.shipper >= 0 && (o.status === ASSIGNED || o.status === DELIVERED || o.status === FAILED || o.status === RETURNED);
+    const known = o.shipper >= 0 && (o.status === ASSIGNED || o.status === ARRIVED || o.status === DELIVERED || o.status === FAILED || o.status === RETURNED);
     j.carrierInfo = known ? carrierInfoJson(o.shipper) : null;
     if (o.status === DISPATCHED && isStaff() && o.shipper >= 0 && o.shipper < S.shippers.length)
       j.offeredTo = S.shippers[o.shipper].name;
   }
   if (isShipper() || isStaff()) {
-    const cs = o.owner ? S.custReviews.averageOfCustomer(o.owner) : { avg: 0, count: 0 };
     j.earn = shipperEarning(o, fee);
     j.customerName = o.owner ? ownerDisplay(o.owner) : null;
-    j.customerRating = cs.count ? cs.avg : null;
-    j.customerRatings = cs.count;
-    j.ratedCustomer = S.custReviews.ofOrder(o.id) != null;
   }
   if (isCustomer() || isStaff()) {
     j.proof = o.proofNote;
@@ -578,9 +581,29 @@ function orderRow(o, index, fee, unreachable, carrier) {
       j.cancelFeeNow = cancelFee(cancelFeeStatus(o), Math.max(0, part - o.loyaltyDiscount - o.promoDiscount), CONFIG);
     }
   }
-  // Mã xác nhận giao: chỉ chủ đơn thấy
-  if (isCustomer() && o.owner === S.me.username)
-    j.code = o.deliveryCode;
+  // Nghiệp vụ kiểu Grab: loại hàng, tiền tip, trò chuyện, shipper yêu thích / bị chặn
+  j.category = o.category || "";
+  j.categoryName = categoryName(o.category || "");
+  {
+    const tip = S.ledger.tipOf(o.id);
+    j.tip = tip ? tip.amount : 0;
+    if (isCustomer() && o.owner === S.me.username)
+      j.canTip = !tip && o.status === DELIVERED && o.shipper >= 0 && CONFIG.tipMax > 0 && (o.deliveredReal === 0 || nowSeconds() - o.deliveredReal <= TIP_WINDOW);
+  }
+  j.chatCount = S.chat.count(o.id);
+  j.chatOpen = chatOpen(o);
+  if (isCustomer() && o.shipper >= 0 && o.shipper < S.shippers.length && o.status !== DISPATCHED) {
+    const nm = S.shippers[o.shipper].name;
+    j.carrierPref = S.prefs.isFavorite(o.owner, nm) ? "fav" : S.prefs.isBlocked(o.owner, nm) ? "block" : "";
+  }
+  // Xác nhận hai bước: shipper bấm "Đã giao tới" -> người nhận bấm "Đã nhận hàng" (hoặc tự hoàn tất sau autoConfirmMinutes phút)
+  {
+    const wait = CONFIG.autoConfirmMinutes;
+    j.receivedBy = o.receivedBy || "";
+    j.autoConfirmAt = o.status === ARRIVED && o.arrivedReal > 0 && wait > 0 ? o.arrivedReal + wait * 60 : null;
+    j.canReceive = o.status === ARRIVED && (isCustomer() && o.owner === S.me.username || isStaff());
+    j.canDispute = o.status === ARRIVED && isCustomer() && o.owner === S.me.username && o.disputes < 2;
+  }
   return j;
 }
 var unreachableSet = () => new Set(S.graph.hasNode(S.depot) ? unreachableFrom(S.graph, S.depot) : []);
@@ -755,6 +778,10 @@ function configJson() {
     offerSeconds: c.offerSeconds,
     matchGiveUp: c.matchGiveUp,
     clockSpeed: c.clockSpeed,
+    missLimit: c.missLimit,
+    codHoldLimit: c.codHoldLimit,
+    tipMax: c.tipMax,
+    autoConfirmMinutes: c.autoConfirmMinutes,
     tariff: tariffJson()
   };
 }
@@ -776,7 +803,7 @@ function stateJson() {
     ok: true,
     notice,
     badges: badgesJson(),
-    config: { autoDeliver: CONFIG.autoDeliver, scoreAware: CONFIG.scoreAware, maxOpenOrders: CONFIG.maxOpenOrders, autoMatch: CONFIG.autoMatch, offerSeconds: CONFIG.offerSeconds, clockSpeed: CONFIG.clockSpeed, tariff: tariffJson() },
+    config: { autoDeliver: CONFIG.autoDeliver, scoreAware: CONFIG.scoreAware, maxOpenOrders: CONFIG.maxOpenOrders, autoMatch: CONFIG.autoMatch, offerSeconds: CONFIG.offerSeconds, clockSpeed: CONFIG.clockSpeed, tipMax: CONFIG.tipMax, autoConfirmMinutes: CONFIG.autoConfirmMinutes, tariff: tariffJson() },
     settings: { shiftStart: S.shiftStart, rush: rushJson() },
     shift: shiftJson(),
     undo: { can: isAdmin() && S.history.canUndo(), label: isAdmin() ? S.history.undoLabel() : "" },
@@ -885,7 +912,7 @@ function rerouteActive() {
 }
 // ------------------------------------------------------------- Lưu "file"
 // Bản ghi đơn để xuất / lưu bản đồ: bỏ trạng thái vận hành và mã xác nhận giao
-var exportRecords = () => S.orders.map((o) => ({ ...o, status: 0, eta: -1, deliveredAt: -1, attempts: 0, failReason: -1, cancelFee: 0, deliveryCode: "", proofNote: "", deliveredReal: 0, codRecorded: false, shipperName: "", returnFee: 0, closedAt: 0 }));
+var exportRecords = () => S.orders.map((o) => ({ ...o, status: 0, eta: -1, deliveredAt: -1, attempts: 0, failReason: -1, cancelFee: 0, deliveryCode: "", proofNote: "", deliveredReal: 0, arrivedReal: 0, disputes: 0, receivedBy: "", codRecorded: false, shipperName: "", returnFee: 0, closedAt: 0 }));
 var liveOrdersText = () => ordersToText(S.orders.map((o) => ({ ...o, shipperName: o.shipper >= 0 && o.shipper < S.shippers.length ? S.shippers[o.shipper].name : "" })));
 // Ghi các file đã thay đổi trong yêu cầu vừa xử lý
 function flushDirty() {
@@ -899,8 +926,6 @@ function flushDirty() {
     writeDataFile("addresses.txt", S.addresses.toText());
   if (d & D_REVIEWS)
     writeDataFile("reviews.txt", S.reviews.toText());
-  if (d & D_CREVIEWS)
-    writeDataFile("customer_reviews.txt", S.custReviews.toText());
   if (d & D_STATS)
     writeDataFile("stats.txt", S.stats.toText());
   if (d & D_NOTES)
@@ -913,6 +938,10 @@ function flushDirty() {
     writeDataFile("cod_ledger.txt", S.cod.toText());
   if (d & D_LEDGER)
     writeDataFile("customer_ledger.txt", S.ledger.toText());
+  if (d & D_CHAT)
+    writeDataFile("order_chat.txt", S.chat.toText());
+  if (d & D_PREFS)
+    writeDataFile("customer_prefs.txt", S.prefs.toText());
   if (d & D_CONFIG)
     writeDataFile("config.txt", CONFIG.toText());
   if (d & D_FLEET)
@@ -1233,10 +1262,6 @@ GET("path", (r) => {
     const key = v === ARRAY ? "array" : v === STL_PQ ? "stl" : "heap";
     add(key, versionName(v), getPath(t, dst), t.dist.get(dst), t.micros, t.heapOps, t.negativeEdge ? "Có cạnh trọng số âm: Dijkstra không đảm bảo kết quả đúng." : "", t.settleOrder, t.settleOrder.length);
   }
-  {
-    const t = astar(S.graph, src, dst, { criterion: crit, vehicle: veh, departAt: depart, rush });
-    add("astar", "A* (đường chim bay)", getPath(t, dst), t.dist.get(dst), t.micros, t.heapOps, t.negativeEdge ? "Có cạnh trọng số âm: A* (cũng như Dijkstra) không đảm bảo kết quả đúng." : "", t.settleOrder, t.settleOrder.length);
-  }
   const bf = bellmanFord(S.graph, src, crit, veh, depart, rush);
   const warn = bf.coChuTrinhAm ? "Phát hiện chu trình âm: " + bf.chuTrinhAm.map(nodeName).join(" → ") : "";
   add("bellman", "Bellman-Ford", bfGetPath(bf, src, dst), bf.khoangCach.get(dst), bf.micros, bf.soLanNoiLong, warn, []);
@@ -1261,40 +1286,6 @@ GET("benchmark", (r) => {
   const reps = clamp(integer(r, "repeats", 3), 1, 10);
   const rows = benchmark(sizes, deg, reps).map((b) => ({ nodes: b.nodes, edges: b.edges, array: b.microsArray, stl: b.microsStl, heap: b.microsHeap, opsArray: b.opsArray, opsStl: b.opsStl, opsHeap: b.opsHeap, agree: b.agree }));
   return { ok: true, rows, degree: deg, repeats: reps };
-});
-// Truy vấn điểm - điểm trên bản đồ hiện tại: Dijkstra (dừng sớm) so với A*
-GET("benchmark/p2p", (r) => {
-  const pairs = clamp(integer(r, "pairs", 50), 1, 500);
-  const crit = criterionParam(r);
-  const ids = S.graph.nodeIds();
-  if (ids.length < 2)
-    throw new BadRequest("Bản đồ cần ít nhất 2 điểm");
-  let seed = 7;
-  const rnd = () => {
-    seed = seed * 1103515245 + 12345 >>> 0;
-    return seed / 4294967296;
-  };
-  let tD = 0, tA = 0, sD = 0, sA = 0, found = 0, agree = 0;
-  for (let i = 0;i < pairs; i++) {
-    const a = ids[Math.floor(rnd() * ids.length)], b = ids[Math.floor(rnd() * ids.length)];
-    if (a === b) {
-      i--;
-      continue;
-    }
-    const d = dijkstra(S.graph, a, MIN_HEAP, { criterion: crit, target: b });
-    const s = astar(S.graph, a, b, { criterion: crit });
-    tD += d.micros;
-    tA += s.micros;
-    sD += d.settleOrder.length;
-    sA += s.settleOrder.length;
-    if (d.dist.get(b) !== INF) {
-      found++;
-      if (Math.abs(d.dist.get(b) - s.dist.get(b)) < 0.000001)
-        agree++;
-    } else if (s.dist.get(b) === INF)
-      agree++;
-  }
-  return { ok: true, pairs, nodes: S.graph.nodeCount(), found, agree: agree === pairs, dijkstra: { settled: sD / pairs, micros: tD / pairs }, astar: { settled: sA / pairs, micros: tA / pairs } };
 });
 // --------------------------------------------------- Bellman-Ford & dự toán
 GET("bellman", (r) => {
@@ -1351,7 +1342,8 @@ POST("shipper/update", (r) => {
     S.accounts.renameLink(oldName, S.shippers[i].name);
     S.stats.rename(oldName, S.shippers[i].name);
     S.cod.renameShipper(oldName, S.shippers[i].name);
-    mark(D_USERS | D_STATS | D_COD);
+    S.prefs.renameShipper(oldName, S.shippers[i].name);
+    mark(D_USERS | D_STATS | D_COD | D_PREFS);
   }
   mark(D_FLEET | D_ORDERS);
   audit("fleet.update", S.shippers[i].name);
@@ -1475,8 +1467,10 @@ POST("shift/reset", () => {
   mark(D_ORDERS);
   audit("shift.reset", "shift");
   for (const o of S.orders)
-    if (o.status === PENDING)
+    if (o.status === PENDING) {
       o.searchSince = nowSeconds();
+      o.opened = false;
+    }
   matchPending();
   return { ...stateJson(), message: "Đã đặt lại ca: các đơn chưa xong quay về chờ giao" };
 });
@@ -1506,12 +1500,10 @@ GET("kpaths", (r) => {
 // Mô phỏng từng bước một thuật toán (trang Mô phỏng)
 GET("trace", (r) => {
   const algo = str(r, "algo", "dijkstra");
-  if (!["dijkstra", "astar", "bfs", "dfs", "bellman"].includes(algo))
+  if (!["dijkstra", "bfs", "dfs", "bellman"].includes(algo))
     throw new BadRequest("Thuật toán không hợp lệ: " + algo);
   const src = requireNode(r, "src");
   const dst = has(r, "dst") && str(r, "dst") !== "" ? requireNode(r, "dst") : -1;
-  if (algo === "astar" && dst < 0)
-    throw new BadRequest("A* cần điểm đến");
   const crit = criterionParam(r), veh = vehicleParam(r);
   const t = runTrace(S.graph, algo, src, dst, crit, veh, 4000);
   return {
@@ -1524,7 +1516,6 @@ GET("trace", (r) => {
     dist: t.dist,
     prev: t.prev,
     cycle: t.cycle,
-    alpha: t.heuristicScale,
     criterion: criterionName(crit)
   };
 });

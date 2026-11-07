@@ -32,7 +32,7 @@ export class MapView {
     this.dim = false;
     this.selection = null;
     this.showKm = false;
-    this.layers = { routes: true, restricted: true, zone: false };   // lớp dữ liệu bật / tắt từ thanh công cụ nổi
+    this.layers = { routes: true, restricted: true, zone: false, graph: true };   // lớp dữ liệu bật / tắt từ thanh công cụ nổi
     this.tripLayer = [];         // lộ trình các chuyến đang chạy {nodes, color}: vẽ mờ khi trang không tự vẽ lộ trình
     this.picking = false;
     this.animatePending = false;
@@ -46,6 +46,8 @@ export class MapView {
     this.insetB = 0;             // phần dưới bị khung kéo lên (điện thoại) che (px)
     this._anim = null;           // chuyển động khung nhìn đang chạy
     this._lastSize = null;
+    this.geo = null;             // dịch vụ đường thật của Google (RouteGeo), có khi nền Google đang bật
+    this.base = null;            // nền Google Maps (gmaps.js) nếu đang bật; MapView vẫn tự vẽ mọi thứ phía trên
 
     // Canvas vẽ nhanh hàng nghìn đoạn đường / điểm (chế độ đồ thị lớn)
     this.canvas = document.createElement('canvas');
@@ -95,7 +97,7 @@ export class MapView {
   }
 
   setPaths(paths, { animate = true } = {}) {
-    this.paths = paths.filter((p) => p.nodes && p.nodes.length > 1);
+    this.paths = paths.filter((p) => (p.nodes && p.nodes.length > 1) || (p.pts && p.pts.length > 1));
     this.animatePending = animate;
     this.render();
   }
@@ -307,9 +309,53 @@ export class MapView {
     this._raf = requestAnimationFrame(() => { this._raf = null; this._draw(); });
   }
 
+  // Điểm màn hình của một lộ trình. Có đường thật của Google (p.geo) thì vẽ theo phố, chưa có thì vẽ theo đồ thị:
+  //   p.pts = [[lat, lon]...]               : đường đã biết sẵn (vd. tuyến do Google chọn)
+  //   p.geo = true | {nodes, from, vehicle} : đi theo thứ tự các điểm của đồ thị trên đường thật; p.nodes là đoạn nodes[from..]
+  _pathPts(p) {
+    if (p.pts) return p.pts.map(([la, lo]) => this.project({ x: la, y: lo }));
+    const straight = () => (p.nodes || []).map((id) => this.screen.get(id)).filter(Boolean);
+    if (!p.geo || !this.geo) return straight();
+    const g = p.geo === true ? { nodes: p.nodes, from: 0, vehicle: p.vehicle } : p.geo;
+    const coords = g.nodes.map((id) => this.byId.get(id)).map((n) => (n ? [n.x, n.y] : null));
+    if (coords.some((c) => !c)) return straight();
+    const e = this.geo.peek(coords, g.vehicle);
+    if (!e) { this.geo.want(coords, g.vehicle); return straight(); }
+    const a = e.idx[g.from || 0], b = e.idx[(g.from || 0) + p.nodes.length - 1];
+    if (a == null || b == null || b <= a) return straight();
+    return e.pts.slice(a, b + 1).map(([la, lo]) => this.project({ x: la, y: lo }));
+  }
+
+  // Vị trí shipper bám theo đường thật (OSM/OSRM hoặc Google) đã vẽ: along = {nodes, i, f, vehicle} nghĩa là đang ở
+  // tỉ lệ f của đoạn nodes[i] → nodes[i+1]. Chưa có đường thật (đang tải, sơ đồ) thì trả null để dùng toạ độ nội suy thẳng.
+  _alongPoint(al) {
+    if (!al || !this.geo || !al.nodes || al.i < 0 || al.i + 1 >= al.nodes.length) return null;
+    const coords = al.nodes.map((id) => this.byId.get(id)).map((n) => (n ? [n.x, n.y] : null));
+    if (coords.some((c) => !c)) return null;
+    const e = this.geo.peek(coords, al.vehicle);
+    if (!e || !e.idx || !e.pts) { if (!e) this.geo.want(coords, al.vehicle); return null; }
+    const a = e.idx[al.i], b = e.idx[al.i + 1];
+    if (a == null || b == null || b < a) return null;
+    const seg = e.pts.slice(a, b + 1);
+    if (seg.length < 2) return seg[0] || null;
+    // độ dài từng đoạn nhỏ (xấp xỉ phẳng, đủ chính xác trong vài km)
+    const k = Math.cos((seg[0][0] * Math.PI) / 180);
+    const d = [0];
+    for (let j = 1; j < seg.length; j++) d.push(d[j - 1] + Math.hypot(seg[j][0] - seg[j - 1][0], (seg[j][1] - seg[j - 1][1]) * k));
+    const want = d[d.length - 1] * Math.min(1, Math.max(0, al.f));
+    for (let j = 1; j < seg.length; j++) {
+      if (d[j] >= want) {
+        const t = d[j] > d[j - 1] ? (want - d[j - 1]) / (d[j] - d[j - 1]) : 0;
+        return [seg[j - 1][0] + (seg[j][0] - seg[j - 1][0]) * t, seg[j - 1][1] + (seg[j][1] - seg[j - 1][1]) * t];
+      }
+    }
+    return seg[seg.length - 1];
+  }
+
   _draw() {
     if (!this.view) this.fitMain();
     const { w, h } = this._size();
+    if (this.base) this.base.sync(w, h);
     const large = this.large;
     const parts = [];
 
@@ -319,7 +365,7 @@ export class MapView {
     const inView = (x, y, m = 40) => x > -m && y > -m && x < w + m && y < h + m;
 
     const highlighted = new Set();
-    for (const p of this.paths) for (const id of p.nodes) highlighted.add(id);
+    for (const p of this.paths) for (const id of p.nodes || []) highlighted.add(id);
 
     // --- Vùng nội thành: bao lồi quanh cụm điểm kho đi tới được (nét bo tròn như một vùng phủ)
     if (this.layers.zone && !large) {
@@ -343,6 +389,7 @@ export class MapView {
       const sel = this.selection && this.selection.edge && this.selection.edge[0] === e.u && this.selection.edge[1] === e.v;
       const style = this.edgeStyles.get(`${e.u}-${e.v}`) || (!this.graph.directed && this.edgeStyles.get(`${e.v}-${e.u}`));
       const dimmed = this.dim && !(highlighted.has(e.u) && highlighted.has(e.v)) && !style;
+      if (this.base && this.layers.graph === false && !style && !sel) continue;   // nền Google: cho ẩn đồ thị đồ án
 
       if (large && !sel && !style) {
         // Chế độ vẽ nhanh: gộp mọi cạnh cùng kiểu vào một <path>; đường hai chiều chỉ vẽ một lần
@@ -383,7 +430,7 @@ export class MapView {
     // --- Lộ trình phủ lên
     const overlay = [];
     this.paths.forEach((p, i) => {
-      const pts = offsetPolyline(p.nodes.map((id) => this.screen.get(id)).filter(Boolean), p.offset || 0);
+      const pts = offsetPolyline(this._pathPts(p), p.offset || 0);
       if (pts.length < 2) return;
       let total = 0;
       for (let j = 1; j < pts.length; j++) total += Math.hypot(pts[j][0] - pts[j - 1][0], pts[j][1] - pts[j - 1][1]);
@@ -468,7 +515,8 @@ export class MapView {
     // Biểu tượng shipper đang di chuyển
     const mk = [];
     for (const m of this.markers) {
-      const [mx, my] = this.project({ x: m.lat, y: m.lon });
+      const g = this._alongPoint(m.along);
+      const [mx, my] = this.project(g ? { x: g[0], y: g[1] } : { x: m.lat, y: m.lon });
       mk.push(`<g class="marker" transform="translate(${mx.toFixed(1)},${my.toFixed(1)})" style="--c:${m.color}"><title>${escapeHtml(m.title || '')}</title><circle class="halo" r="22"/><path class="tail" d="M-6 9 0 19 6 9z"/><circle class="face" r="14"/><text>${escapeHtml(m.label || '')}</text></g>`);
     }
     parts.push(`<g>${mk.join('')}</g>`);

@@ -335,9 +335,9 @@ class ShiftManager {
     this.standby = new Map;
     this.events = [];
     for (const o of orders) {
-      if (keepFinal && (o.status === DELIVERED || o.status === CANCELLED || o.status === RETURNED || o.status === CREATED))
+      if (keepFinal && (o.status === DELIVERED || o.status === CANCELLED || o.status === RETURNED || o.status === CREATED || o.status === ARRIVED))
         continue;
-      Object.assign(o, { status: PENDING, shipper: -1, eta: -1, deliveredAt: -1, attempts: 0, failReason: -1, tried: [], noShipperAt: 0 });
+      Object.assign(o, { status: PENDING, shipper: -1, eta: -1, deliveredAt: -1, attempts: 0, failReason: -1, tried: [], noShipperAt: 0, opened: false });
     }
     this.trips = [];
     this.clock = 0;
@@ -417,10 +417,33 @@ class ShiftManager {
     this.trips.splice(i, 1);
     return n;
   }
-  deliver(orderId, orders, at) {
+  // Shipper bấm "Đã giao tới": Đang giao -> Chờ xác nhận (người nhận phải xác nhận "Đã nhận hàng" thì đơn mới hoàn tất)
+  arrive(orderId, orders, at) {
     const o = orders.find((x) => x.id === orderId);
     if (!o || o.status !== ASSIGNED)
       return false;
+    o.status = ARRIVED;
+    o.deliveredAt = at;
+    this.setStandby(o.shipper, o.destination);
+    this.log(at, "arrived", o.id, o.shipper, "");
+    return true;
+  }
+  // Người nhận báo chưa nhận được hàng: Chờ xác nhận -> Đang giao
+  reopenDelivery(orderId, orders) {
+    const o = orders.find((x) => x.id === orderId);
+    if (!o || o.status !== ARRIVED)
+      return false;
+    o.status = ASSIGNED;
+    o.deliveredAt = -1;
+    this.log(this.clock, "disputed", o.id, o.shipper, "");
+    return true;
+  }
+  deliver(orderId, orders, at) {
+    const o = orders.find((x) => x.id === orderId);
+    if (!o || o.status !== ASSIGNED && o.status !== ARRIVED)
+      return false;
+    if (o.status === ARRIVED && o.deliveredAt >= 0)
+      at = o.deliveredAt;
     o.status = DELIVERED;
     o.deliveredAt = at;
     this.setStandby(o.shipper, o.destination);

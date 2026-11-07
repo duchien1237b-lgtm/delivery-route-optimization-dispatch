@@ -159,27 +159,12 @@ export default {
           </div>
         </div>
         <div><div id="b-out"></div>
-          <div class="block" id="b-p2p">
-            <div class="split"><h2>Dijkstra hay A* trên bản đồ đang mở</h2><button class="btn small" id="b-p2p-run">Đo 100 cặp điểm</button></div>
-            <div id="b-p2p-out"><p class="empty">Chọn ngẫu nhiên 100 cặp điểm đi, điểm đến; mỗi cặp chạy Dijkstra (dừng khi tới đích) và A*.</p></div>
-          </div>
         </div>
       </div>`;
     panel.append(root);
     const f = $('#b-form', root);
     f.degree.addEventListener('input', () => { $('#b-deg', root).textContent = f.degree.value; });
     f.addEventListener('submit', (e) => { e.preventDefault(); run(e.submitter); });
-    $('#b-p2p-run', root).addEventListener('click', (e) => guard(async () => {
-      const r = await api.get('benchmark/p2p', { pairs: 100 });
-      const bar = (v, max, color) => `<div class="hbar" style="height:10px"><i style="width:${(v / max) * 100}%;background:${color}"></i></div>`;
-      const maxS = Math.max(r.dijkstra.settled, r.astar.settled, 1);
-      $('#b-p2p-out', root).innerHTML = `<p class="sub">${fmt.num(r.nodes, 0)} điểm, ${r.found}/${r.pairs} cặp có đường. ${r.agree ? 'Hai thuật toán cho cùng khoảng cách ở mọi cặp.' : '<b style="color:var(--stop)">Có cặp không khớp!</b>'}</p>
-        <table class="data"><thead><tr><th>Thuật toán</th><th>Số đỉnh phải chốt (trung bình)</th><th class="num">Thời gian</th></tr></thead><tbody>
-          <tr><td>Dijkstra, Min-Heap</td><td style="min-width:200px">${bar(r.dijkstra.settled, maxS, 'var(--s2)')}<small>${fmt.num(r.dijkstra.settled, 0)} đỉnh</small></td><td class="num">${fmt.us(r.dijkstra.micros)}</td></tr>
-          <tr><td>A*, đường chim bay</td><td>${bar(r.astar.settled, maxS, 'var(--s1)')}<small>${fmt.num(r.astar.settled, 0)} đỉnh, ít hơn ${fmt.num((1 - r.astar.settled / Math.max(r.dijkstra.settled, 1e-9)) * 100, 0)}%</small></td><td class="num">${fmt.us(r.astar.micros)}</td></tr>
-        </tbody></table>
-        <p class="muted" style="font-size:12px;margin-top:6px">Bản đồ nhỏ thì khác biệt ít; mở bộ dữ liệu “Đô thị mô phỏng” để thấy rõ.</p>`;
-    }, e.currentTarget));
     onResize = () => drawChart();
     window.addEventListener('resize', onResize);
     renderResult();

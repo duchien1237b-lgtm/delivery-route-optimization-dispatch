@@ -58,7 +58,7 @@ function orderForm(o) {
     </div>
     <div class="row">
       <label class="field"><span>Người nhận</span><input type="text" name="recipient" maxlength="60" value="${o ? escapeHtml(o.recipient || '') : ''}" placeholder="Chị Lan"></label>
-      <label class="field"><span>Số điện thoại</span><input type="tel" name="phone" inputmode="numeric" pattern="0[0-9]{9}" maxlength="10" value="${o ? escapeHtml(o.phone || '') : ''}" placeholder="0909123456"></label>
+      <label class="field"><span>Số điện thoại</span><input type="tel" name="phone" inputmode="numeric" pattern="0[0-9]{9,10}" maxlength="11" value="${o ? escapeHtml(o.phone || '') : ''}" placeholder="0909123456"></label>
     </div>
     <div class="row">
       <label class="field"><span>Thu hộ COD (đ)</span><input type="number" name="cod" min="0" max="50000000" step="1000" value="${o ? o.cod || 0 : 0}"></label>
@@ -313,7 +313,7 @@ function drawMap() {
         if (r.path.length < 2) return;
         const idx = r.shipper >= 0 ? r.shipper : i;
         const color = ROUTE_COLORS[idx % ROUTE_COLORS.length];
-        paths.push({ nodes: r.path, color, width: 5, arrows: true, offset: (idx - (plan.routes.length - 1) / 2) * 5 });
+        paths.push({ nodes: r.path, color, width: 5, arrows: true, offset: (idx - (plan.routes.length - 1) / 2) * 5, geo: true, vehicle: r.vehicleName || r.vehicle || '' });
         r.stops.forEach((s, j) => styles.set(s.node, { badge: j + 1, badgeColor: color, ring: s.late ? 'var(--stop)' : s.urgent ? 'var(--signal)' : null, keep: true, tip: `Đơn ${s.order}, tới lúc ${fmt.clock(s.arrival)}${s.late ? ' (trễ)' : ''}` }));
       });
       const missing = new Set([...plan.unreachable, ...plan.overweight]);

@@ -1,11 +1,12 @@
 // Chi tiết một đơn (dùng chung cho khách hàng, shipper, quản trị viên):
-// diễn biến, hoá đơn (báo giá = hoá đơn), mã nhận hàng, đánh giá, và các thao tác hợp lệ theo vai trò + trạng thái.
+// diễn biến, hoá đơn (báo giá = hoá đơn), xác nhận nhận hàng, đánh giá, và các thao tác hợp lệ theo vai trò + trạng thái.
 // Server vẫn kiểm tra lại mọi thao tác (máy trạng thái trả 409 nếu không hợp lệ, 403 nếu không phải đơn của bạn).
 import { api } from './api.js';
 import { store, escapeHtml } from './store.js';
 import {
   $, fmt, money, when, guard, guardForm, toast, showModal, statusChip, askReason, confirmBox, pickFailReason, EVENT_LABEL,
 } from './ui.js';
+import { chatButton, prefButtons, chatDialog, tipDialog, setPref, shareCodeDialog } from './grabx.js';
 
 const role = () => (store.state && store.state.me ? store.state.me.role : '');
 const isStaff = () => role() === 'admin';
@@ -96,28 +97,26 @@ export async function returnDialog(o, st = store) {
   return guard(async () => { const res = await st.mutate('order/return', { id: o.id }); toast(res.message); return true; });
 }
 
-// Shipper (hoặc nhân viên giao thay) xác nhận đã giao: mã 4 số người nhận đọc + số tiền thu hộ
+// Shipper báo "Đã giao tới" (kèm số tiền mặt thu hộ nếu có). Người nhận sẽ bấm xác nhận lần hai.
+// Quản trị viên (staff) có thể xác nhận giao thay khi người nhận không phản hồi: bắt buộc ghi lý do.
 export function deliverDialog(o, { staff = false } = {}) {
   return new Promise((resolve) => {
     const dlg = $('#modal');
     let done = false;
-    showModal(`Xác nhận giao đơn ${o.id}`, `<form id="dv-form" class="dv-form" novalidate>
+    const needCash = collectOf(o) && o.status !== 8;
+    showModal(staff ? `Xác nhận giao thay đơn ${o.id}` : `Đã giao tới · đơn ${o.id}`, `<form id="dv-form" class="dv-form" novalidate>
       <p class="muted" style="margin:-4px 0 12px">${escapeHtml([o.recipient, o.destinationName, o.phone].filter(Boolean).join(' · '))}</p>
-      ${staff ? '<label class="check"><input type="checkbox" name="force"> Giao thay (người nhận không đọc được mã) — bắt buộc ghi lý do</label>' : ''}
-      <label class="field"><span>Mã nhận hàng (người nhận đọc cho bạn)</span><input name="code" class="otp" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]{4}" placeholder="4 chữ số"></label>
-      ${collectOf(o) ? `<label class="field"><span>Tiền mặt đã thu (phải đúng ${money(collectOf(o))}${collectOf(o) > (o.cod || 0) ? ', gồm cước người nhận trả' : ''})</span><input name="cash" type="number" min="0" step="1000" inputmode="numeric" placeholder="${collectOf(o)}"></label>` : ''}
-      <label class="field"><span>Ghi chú giao hàng</span><input name="note" maxlength="150" placeholder="vd: gửi bảo vệ toà nhà"></label>
-      <div class="actions"><button class="btn primary">Xác nhận đã giao</button></div></form>`);
+      <p class="muted small">${staff ? 'Đơn sẽ hoàn tất ngay mà không cần người nhận bấm xác nhận.' : 'Sau khi bạn bấm, người nhận sẽ thấy nút <b>Đã nhận hàng</b> để xác nhận lần nữa. Nếu họ không phản hồi, đơn tự hoàn tất sau một thời gian.'}</p>
+      ${needCash ? `<label class="field"><span>Tiền mặt đã thu (phải đúng ${money(collectOf(o))}${collectOf(o) > (o.cod || 0) ? ', gồm cước người nhận trả' : ''})</span><input name="cash" type="number" min="0" step="1000" inputmode="numeric" placeholder="${collectOf(o)}"></label>` : ''}
+      <label class="field"><span>${staff ? 'Lý do giao thay (bắt buộc)' : 'Ghi chú giao hàng'}</span><input name="note" maxlength="150" placeholder="${staff ? 'vd: người nhận đã xác nhận qua điện thoại' : 'vd: gửi bảo vệ toà nhà'}"></label>
+      <div class="actions"><button class="btn primary">${staff ? 'Xác nhận giao thay' : 'Đã giao tới'}</button></div></form>`);
     const f = $('#dv-form');
-    setTimeout(() => f.code.focus(), 30);
-    f.code.addEventListener('input', () => { f.code.value = f.code.value.replace(/\D/g, '').slice(0, 4); });
     f.addEventListener('submit', (e) => {
       e.preventDefault();
-      const params = { id: o.id, code: f.code.value, note: f.note.value.trim() };
-      if (collectOf(o)) params.cash = f.cash.value;
-      if (staff && f.force.checked) params.force = 1;
+      const params = { id: o.id, note: f.note.value.trim() };
+      if (needCash) params.cash = f.cash.value;
       guardForm(f, async () => {
-        const res = await store.mutate('order/deliver', params);
+        const res = await store.mutate(staff ? 'order/deliver' : 'order/arrive', params);
         done = true;
         dlg.close();
         toast(res.message);
@@ -126,6 +125,18 @@ export function deliverDialog(o, { staff = false } = {}) {
     });
     dlg.addEventListener('close', () => { if (!done) resolve(false); }, { once: true });
   });
+}
+
+// Người nhận / khách bấm "Đã nhận hàng" hoặc "Chưa nhận được hàng"
+export async function receiveOrder(o, st = store) {
+  const ok = await confirmBox(`Xác nhận đã nhận đơn ${o.id}?`, 'Chỉ bấm khi bạn đã thật sự nhận được hàng. Sau khi xác nhận, đơn hoàn tất và không hoàn tác được.');
+  if (!ok) return false;
+  return guard(async () => { const res = await st.mutate('order/receive', { id: o.id }); toast(res.message); return true; });
+}
+export async function disputeOrder(o, st = store) {
+  const why = await askReason(`Chưa nhận được đơn ${o.id}`, { presets: ['Shipper chưa tới', 'Không liên lạc được shipper', 'Nhận thiếu / sai hàng'], ok: 'Báo chưa nhận', label: 'Lý do', note: 'Đơn quay lại trạng thái Đang giao và shipper được báo để liên hệ bạn.' });
+  if (why === null || why === undefined) return false;
+  return guard(async () => { const res = await st.mutate('order/dispute', { id: o.id, reason: why }); toast(res.message); return true; });
 }
 
 function starsHtml() {
@@ -151,22 +162,29 @@ export async function openOrder(id, { go } = {}) {
   if (isStaff()) {
     if (o.status === 6) acts.push('<button type="button" class="btn small primary" data-act="confirm">Xác nhận</button><button type="button" class="btn small ghost danger" data-act="reject">Từ chối</button>');
     if (o.status === 0) acts.push('<button type="button" class="btn small primary" data-act="retry">Tìm shipper ngay</button>');
-    if (o.status === 7 && res.order.trip) acts.push('<button type="button" class="btn small ghost danger" data-act="recall">Thu hồi lời mời</button>');
+    if (o.status === 7 && res.order.trip) acts.push('<button type="button" class="btn small ghost danger" data-act="recall">Thu hồi phân công</button>');
     if (o.status === 3) acts.push('<button type="button" class="btn small" data-act="requeue">Giao lại</button><button type="button" class="btn small ghost" data-act="return">Hoàn kho</button>');
-    if (o.status === 1) acts.push('<button type="button" class="btn small" data-act="deliver">Xác nhận giao thay</button>');
+    if (o.status === 1 || o.status === 8) acts.push('<button type="button" class="btn small" data-act="deliver">Xác nhận giao thay</button>');
     if (o.cancelFeeNow !== undefined) acts.push(`<button type="button" class="btn small ghost danger" data-act="cancel">Huỷ đơn${o.cancelFeeNow ? ` (phí ${money(o.cancelFeeNow)})` : ''}</button>`);
   }
-  if (r === 'shipper' && o.status === 1) acts.push('<button type="button" class="btn small primary" data-act="deliver">Đã giao</button><button type="button" class="btn small ghost danger" data-act="fail">Giao thất bại</button>');
+  if (r === 'customer' && o.canReceive) acts.push('<button type="button" class="btn small primary" data-act="receive">Đã nhận hàng</button>');
+  if (r === 'customer' && o.canDispute) acts.push('<button type="button" class="btn small ghost danger" data-act="dispute">Chưa nhận được hàng</button>');
+  if (r === 'shipper' && o.status === 1) acts.push('<button type="button" class="btn small primary" data-act="deliver">Đã giao tới</button><button type="button" class="btn small ghost danger" data-act="fail">Giao thất bại</button>');
+  if (r === 'customer' && o.phone && [0, 6, 7, 1, 8].includes(o.status)) acts.push('<button type="button" class="btn small ghost" data-act="sharecode">Gửi liên kết cho người nhận</button>');
+  acts.push(chatButton(o));
+  if (r === 'customer' && o.canTip) acts.push('<button type="button" class="btn small" data-act="tip">Tip shipper</button>');
+  if (r === 'customer' && (o.status === 2 || o.status === 5)) acts.push(prefButtons(o));
   acts.push('<button type="button" class="btn small ghost" data-act="print">In hoá đơn</button>');
 
-  const showCode = r === 'customer' && o.code && [6, 0, 7, 1, 3].includes(o.status);
   showModal(`Đơn ${o.id}`, `<div class="od">
     <div class="od-head">${statusChip(o)}${o.urgent ? ' <span class="chip urgent">Hoả tốc</span>' : ''}<span class="muted small">Đặt ${when.full(o.createdAt)}</span></div>
-    ${showCode ? `<div class="code-box"><span>Mã nhận hàng</span><b>${escapeHtml(o.code)}</b><small>Đọc mã này cho shipper khi nhận hàng. Không chia sẻ trước.</small></div>` : ''}
+    ${o.status === 8 ? `<div class="code-box"><span>Shipper đã giao tới</span><small>${r === 'customer' ? 'Nếu đã nhận được hàng, hãy bấm “Đã nhận hàng”.' : 'Đang chờ người nhận xác nhận.'}${o.autoConfirmAt ? ` Tự hoàn tất lúc ${when.full(o.autoConfirmAt)} nếu không có phản hồi.` : ''}</small></div>` : ''}
     <dl class="od-grid">
       <dt>Giao tới</dt><dd>${escapeHtml(o.destinationName)}</dd>
       <dt>Người nhận</dt><dd>${escapeHtml(o.recipient || '–')}${o.phone ? ` · <a href="tel:${escapeHtml(o.phone)}">${escapeHtml(o.phone)}</a>` : ''}</dd>
       <dt>Hàng</dt><dd>${fmt.num(o.weight)} kg${o.dims ? ` · ${escapeHtml(o.dims)} cm` : ''}${o.chargedWeight > o.weight ? ` <small class="muted">(tính cước ${fmt.num(o.chargedWeight)} kg)</small>` : ''}${o.note ? ` · ${escapeHtml(o.note)}` : ''}</dd>
+      ${o.categoryName ? `<dt>Loại hàng</dt><dd>${escapeHtml(o.categoryName)}</dd>` : ''}
+      ${o.tip ? `<dt>Tiền tip</dt><dd>${money(o.tip)} <small class="muted">(shipper nhận 100%)</small></dd>` : ''}
       ${o.value ? `<dt>Khai giá</dt><dd>${money(o.value)}${o.insurance ? ` · bảo hiểm ${money(o.insurance)}` : ' <small class="muted">(miễn phí bảo hiểm)</small>'}</dd>` : ''}
       ${o.receiverPays ? `<dt>Trả cước</dt><dd>Người nhận trả ${money(o.total)} khi nhận</dd>` : ''}
       ${o.deadline >= 0 ? `<dt>Hạn giao</dt><dd>${fmt.clock(o.deadline)}</dd>` : ''}
@@ -175,11 +193,9 @@ export async function openOrder(id, { go } = {}) {
       ${o.ownerName ? `<dt>Khách hàng</dt><dd>${escapeHtml(o.ownerName)} <small class="muted">@${escapeHtml(o.owner)}</small></dd>` : ''}
       ${o.carrierInfo ? `<dt>Shipper</dt><dd>${escapeHtml(o.carrierInfo.name)} · ${escapeHtml(o.carrierInfo.vehicleName)}${o.carrierInfo.plate ? ` · ${escapeHtml(o.carrierInfo.plate)}` : ''}${o.carrierInfo.rating ? ` · ★ ${fmt.num(o.carrierInfo.rating)} (${o.carrierInfo.ratings})` : ''}${o.carrierPhone ? ` · <a href="tel:${escapeHtml(o.carrierPhone)}">${escapeHtml(o.carrierPhone)}</a>` : ''}</dd>`
         : o.carrier ? `<dt>Shipper</dt><dd>${escapeHtml(o.carrier)}${o.carrierPhone ? ` · <a href="tel:${escapeHtml(o.carrierPhone)}">${escapeHtml(o.carrierPhone)}</a>` : ''}${o.trip && !o.trip.accepted ? ' <small class="muted">(chờ shipper nhận)</small>' : ''}</dd>` : ''}
-      ${o.offeredTo ? `<dt>Đang mời</dt><dd>${escapeHtml(o.offeredTo)} <small class="muted">(chờ trả lời)</small></dd>` : ''}
       ${o.tried && r !== 'customer' ? `<dt>Đã từ chối / bỏ lỡ</dt><dd>${o.tried} shipper</dd>` : ''}
       ${o.earn && r !== 'customer' ? `<dt>Thu nhập shipper</dt><dd>${money(o.earn)}</dd>` : ''}
-      ${o.customerRating && r !== 'customer' ? `<dt>Điểm khách</dt><dd>★ ${fmt.num(o.customerRating)} (${o.customerRatings} lượt)</dd>` : ''}
-      ${o.eta != null && (o.status === 1 || o.status === 7) ? `<dt>Dự kiến tới</dt><dd>${fmt.clock(o.eta)}</dd>` : ''}
+      ${o.eta != null && (o.status === 1 || o.status === 7 || o.status === 8) ? `<dt>Dự kiến tới</dt><dd>${fmt.clock(o.eta)}</dd>` : ''}
       ${o.failReasonName && o.status !== 2 ? `<dt>Lý do thất bại</dt><dd class="bad">${escapeHtml(o.failReasonName)}</dd>` : ''}
       ${o.proof ? `<dt>Ghi chú xử lý</dt><dd>${escapeHtml(o.proof)}</dd>` : ''}
     </dl>
@@ -194,15 +210,21 @@ export async function openOrder(id, { go } = {}) {
   const body = $('#modal-body');
   const close = () => $('#modal').close();
   const run = (fn, btn) => guard(async () => { const out = await fn(); if (out && out.message) toast(out.message); close(); }, btn);
+  for (const b of body.querySelectorAll('[data-chat]')) b.addEventListener('click', () => chatDialog(o.id, store));
+  for (const b of body.querySelectorAll('[data-pref]')) b.addEventListener('click', async () => { if (await setPref(b.dataset.name, b.dataset.pref, store)) close(); });
   for (const b of body.querySelectorAll('[data-act]')) {
     b.addEventListener('click', async () => {
       const a = b.dataset.act;
       if (a === 'print') { printInvoice(inv); return; }
+      if (a === 'tip') { tipDialog(o, store, o.carrierInfo ? o.carrierInfo.name : ''); return; }
+      if (a === 'sharecode') { shareCodeDialog(o); return; }
+      if (a === 'receive') { if (await receiveOrder(o)) close(); return; }
+      if (a === 'dispute') { if (await disputeOrder(o)) close(); return; }
       if (a === 'complain') { close(); if (go) go('complaints', { order: o.id }); return; }
       if (a === 'confirm') return run(() => store.mutate('order/confirm', { id: o.id }), b);
       if (a === 'retry') return run(() => store.mutate('order/retry', { id: o.id }), b);
       if (a === 'recall') {
-        const why = await askReason(`Thu hồi lời mời đơn ${o.id}`, { presets: ['Shipper không phản hồi', 'Cần đổi shipper'], ok: 'Thu hồi', note: 'Đơn về hàng chờ và được gửi cho shipper gần nhất kế tiếp (shipper này không bị tính là từ chối).' });
+        const why = await askReason(`Thu hồi phân công đơn ${o.id}`, { presets: ['Shipper không phản hồi', 'Cần đổi shipper'], ok: 'Thu hồi', note: 'Đơn về hàng chờ và được gửi cho shipper gần nhất kế tiếp (shipper này không bị tính là từ chối).' });
         if (why) run(() => store.mutate('trip/recall', { id: res.order.trip.id, reason: why }));
         return;
       }

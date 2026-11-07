@@ -17,7 +17,7 @@ const STATUSES = [{ v: 'active', label: 'Hoạt động' }, { v: 'pending', labe
 const SORTS = [{ v: 'created:desc', label: 'Mới đăng ký' }, { v: 'login:desc', label: 'Đăng nhập gần đây' }, { v: 'name:asc', label: 'Tên A–Z' }, { v: 'username:asc', label: 'Tên đăng nhập' }, { v: 'role:asc', label: 'Vai trò' }, { v: 'status:asc', label: 'Trạng thái' }];
 const ROLE_NOTE = {
   admin: 'Toàn quyền: bản đồ, đơn, đội xe, ghép đơn, cấu hình, tài khoản, sổ COD, khiếu nại, nhật ký kiểm toán',
-  shipper: 'Bật sẵn sàng, nhận / bỏ qua lời mời, giao bằng mã xác nhận, báo thất bại, nộp tiền thu hộ, đánh giá khách',
+  shipper: 'Bật sẵn sàng, nhận đơn trên bảng đơn chờ, báo đã giao tới, báo thất bại, nộp tiền thu hộ',
   customer: 'Đặt đơn có báo giá, theo dõi shipper trực tiếp, huỷ có lý do, đánh giá shipper, khiếu nại',
 };
 const isAdmin = () => ctx.store.state.me.role === 'admin';

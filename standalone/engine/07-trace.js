@@ -8,33 +8,10 @@ function clip(arr, s) {
   s.container = arr.length > MAX_SNAPSHOT ? arr.slice(0, MAX_SNAPSHOT) : arr;
   return s;
 }
-function heapSearch(g, astar, src, dst, crit, veh, res, rec) {
+function heapSearch(g, src, dst, crit, veh, res, rec) {
   const ids = g.nodeIds();
   const n = ids.length;
   const idx = new Map(ids.map((id, i) => [id, i]));
-  const h = new Array(n).fill(0);
-  if (astar && g.hasNode(dst)) {
-    let alpha = INF3;
-    outer:
-      for (let i = 0;i < n; i++)
-        for (const e of g.neighbors(ids[i])) {
-          if (!vehicleAllowed(e, veh))
-            continue;
-          const w = edgeWeight(e, crit, veh);
-          if (w < 0) {
-            alpha = 0;
-            break outer;
-          }
-          const km = straightLineKm(g.getNode(ids[i]), g.getNode(e.to));
-          if (km > 0.000000001)
-            alpha = Math.min(alpha, w / km);
-        }
-    if (alpha === INF3)
-      alpha = 0;
-    res.heuristicScale = alpha;
-    for (let i = 0;i < n; i++)
-      h[i] = alpha * straightLineKm(g.getNode(ids[i]), g.getNode(dst));
-  }
   const dist = new Array(n).fill(INF3);
   const prev = new Array(n).fill(-1);
   const done = new Uint8Array(n);
@@ -49,8 +26,8 @@ function heapSearch(g, astar, src, dst, crit, veh, res, rec) {
   const s = idx.get(src);
   const t = g.hasNode(dst) ? idx.get(dst) : -1;
   dist[s] = 0;
-  heap.pushOrDecrease(s, h[s]);
-  snap(mk("init", 0, src, -1, 0, h[s]));
+  heap.pushOrDecrease(s, 0);
+  snap(mk("init", 0, src, -1, 0, 0));
   while (!heap.empty()) {
     const [u, key] = heap.popMin();
     done[u] = 1;
@@ -69,8 +46,8 @@ function heapSearch(g, astar, src, dst, crit, veh, res, rec) {
       if (nd < dist[v]) {
         dist[v] = nd;
         prev[v] = u;
-        heap.pushOrDecrease(v, nd + h[v]);
-        snap(mk("relax", 6, ids[u], e.to, nd, h[v]));
+        heap.pushOrDecrease(v, nd);
+        snap(mk("relax", 6, ids[u], e.to, nd, 0));
       } else
         snap(mk("skip", 5, ids[u], e.to, nd, dist[v]));
     }
@@ -190,7 +167,7 @@ function bellman(g, src, crit, veh, res, rec) {
   rec.add(mk("done", 6));
 }
 function runTrace(g, algo, src, dst, crit, veh, maxSteps = 4000) {
-  const res = { algo, containerKind: "", pseudo: [], steps: [], truncated: false, dist: new Map, prev: new Map, cycle: [], heuristicScale: 0 };
+  const res = { algo, containerKind: "", pseudo: [], steps: [], truncated: false, dist: new Map, prev: new Map, cycle: [] };
   const rec = {
     add(s) {
       if (res.steps.length >= maxSteps) {
@@ -240,20 +217,19 @@ function runTrace(g, algo, src, dst, crit, veh, maxSteps = 4000) {
     ];
     bellman(g, src, crit, veh, res, rec);
   } else {
-    const a = algo === "astar";
-    res.algo = a ? "astar" : "dijkstra";
+    res.algo = "dijkstra";
     res.containerKind = "heap";
     res.pseudo = [
-      a ? "dist[s] ← 0; heap.push(s, h(s))" : "dist[s] ← 0; heap.push(s, 0)",
+      "dist[s] ← 0; heap.push(s, 0)",
       "while heap chưa rỗng:",
-      a ? "    u ← heap.popMin()   // f = dist + h nhỏ nhất" : "    u ← heap.popMin()   // chốt dist[u]",
+      "    u ← heap.popMin()   // chốt dist[u]",
       "    if u = đích: dừng",
       "    for mỗi cạnh (u, v, w), v chưa chốt:",
       "        if dist[u] + w ≥ dist[v]: bỏ qua",
       "        dist[v] ← dist[u] + w; prev[v] ← u",
-      a ? "        heap.pushOrDecrease(v, dist[v] + h(v))" : "        heap.pushOrDecrease(v, dist[v])"
+      "        heap.pushOrDecrease(v, dist[v])"
     ];
-    heapSearch(g, a, src, dst, crit, veh, res, rec);
+    heapSearch(g, src, dst, crit, veh, res, rec);
   }
   return res;
 }

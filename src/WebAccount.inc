@@ -342,6 +342,12 @@ const Commerce::Address& ownAddress(int id) {
 }
 
 // ------------------------------------------------------------ Shipper tự quản lý
+long long tipsOfShipper(const std::string& name) {
+    long long sum = 0;
+    for (const Billing::Tx& t : S.ledger.all())
+        if (t.kind == "tip" && t.ref == name) sum += t.amount;
+    return sum;
+}
 Json shipperStatsJson(const std::string& name) {
     Commerce::ShipperStat st = S.stats.get(name);
     int count = 0;
@@ -352,7 +358,10 @@ Json shipperStatsJson(const std::string& name) {
         .set("failed", st.failed).set("accepted", st.accepted).set("declines", st.declines)
         .set("income", static_cast<double>(st.income)).set("rating", count ? Json(avg) : Json()).set("ratings", count)
         .set("score", shipperScore(name)).set("codHeld", static_cast<double>(S.cod.held(name)))
-        .set("codAwaiting", static_cast<double>(S.cod.awaiting(name)));
+        .set("codAwaiting", static_cast<double>(S.cod.awaiting(name)))
+        .set("codHoldLimit", static_cast<double>(Commerce::config().codHoldLimit))
+        .set("tips", static_cast<double>(tipsOfShipper(name)))
+        .set("missStreak", S.missStreak.count(name) ? S.missStreak.at(name) : 0).set("missLimit", Commerce::config().missLimit);
 }
 
 // ------------------------------------------------------------ Quản lý tài khoản (nhân viên)
@@ -548,7 +557,8 @@ Json adminRemoveUser(const httplib::Request& r) {
     if (!e.empty()) throw BadRequest(e);
     S.sessions.revokeUser(user);
     S.addresses.removeOwner(user);
-    mark(D_USERS | D_ADDR);
+    S.prefs.removeCustomer(user);
+    mark(D_USERS | D_ADDR | D_PREFS);
     audit("user.remove", user);
     return Json::object().set("ok", true).set("message", "Đã xoá tài khoản " + user);
 }
@@ -633,6 +643,7 @@ void registerAccountRoutes(httplib::Server& svr) {
     routePost(svr, "/api/shipper/ready", wrap([](const httplib::Request& r) {
         bool ready = flag(r, "ready");
         S.accounts.setReady(S.me.username, ready);
+        if (ready) S.missStreak[S.me.link] = 0;
         mark(D_USERS);
         audit("shipper.ready", S.me.username, ready ? "sẵn sàng" : "tạm nghỉ");
         S.me = *S.accounts.find(S.me.username);

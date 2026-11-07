@@ -15,9 +15,10 @@ const picked = new Set();   // đơn Chờ giao được chọn để phân côn
 const GROUPS = [
   { v: 'todo', label: 'Cần xử lý', status: '6,3' },
   { v: 'new', label: 'Mới', status: '6' },
-  { v: 'wait', label: 'Chờ giao / đang tìm shipper', status: '0' },
+  { v: 'wait', label: 'Chờ shipper nhận đơn', status: '0' },
   { v: 'disp', label: 'Đã mời shipper', status: '7' },
   { v: 'live', label: 'Đang giao', status: '1' },
+  { v: 'await', label: 'Chờ người nhận xác nhận', status: '8' },
   { v: 'fail', label: 'Thất bại', status: '3' },
   { v: 'done', label: 'Đã giao', status: '2' },
   { v: 'closed', label: 'Huỷ / hoàn kho', status: '4,5' },

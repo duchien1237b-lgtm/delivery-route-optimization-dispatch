@@ -111,7 +111,7 @@ bool CustomerLedger::loadText(const std::string& text, std::string& error) {
             t.method = decodeToken(c[8]);
             t.ref = decodeToken(c[9]);
             t.note = decodeLine(rest);
-            if ((t.kind != "payout" && t.kind != "collect" && t.kind != "comp") || t.amount <= 0 || t.customer.empty())
+            if ((t.kind != "payout" && t.kind != "collect" && t.kind != "comp" && t.kind != "tip") || t.amount <= 0 || t.customer.empty())
                 throw std::invalid_argument("x");
             maxId = std::max(maxId, t.id);
             items.push_back(t);
@@ -127,7 +127,7 @@ bool CustomerLedger::loadText(const std::string& text, std::string& error) {
 
 std::string CustomerLedger::toText() const {
     std::ostringstream o;
-    o << "# So giao dich khach hang. T id loai(payout|collect|comp) khach so_tien luc(giay) nguoi_ghi ma_don ma_khieu_nai kenh tham_chieu ghi_chu\n";
+    o << "# So giao dich khach hang. T id loai(payout|collect|comp|tip) khach so_tien luc(giay) nguoi_ghi ma_don ma_khieu_nai kenh tham_chieu ghi_chu\n";
     for (const Tx& t : items_)
         o << "T " << t.id << ' ' << t.kind << ' ' << encodeToken(t.customer) << ' ' << t.amount << ' ' << t.at << ' ' << encodeToken(t.by) << ' '
           << t.order << ' ' << t.complaint << ' ' << encodeToken(t.method) << ' ' << encodeToken(t.ref) << ' ' << encodeLine(t.note) << '\n';
@@ -135,12 +135,12 @@ std::string CustomerLedger::toText() const {
 }
 
 std::string CustomerLedger::add(Tx tx, int& id) {
-    if (tx.kind != "payout" && tx.kind != "collect" && tx.kind != "comp") return "Loại giao dịch không hợp lệ";
+    if (tx.kind != "payout" && tx.kind != "collect" && tx.kind != "comp" && tx.kind != "tip") return "Loại giao dịch không hợp lệ";
     if (tx.amount <= 0 || tx.amount > 1000000000) return "Số tiền phải lớn hơn 0";
     if (tx.customer.empty()) return "Thiếu khách hàng";
-    if (tx.kind == "comp") tx.method = "wallet";
+    if (tx.kind == "comp" || tx.kind == "tip") tx.method = "wallet";
     else if (tx.method != "bank" && tx.method != "cash") return "Hãy chọn hình thức: chuyển khoản hoặc tiền mặt";
-    if (tx.kind != "comp" && tx.method == "bank" && tx.ref.size() < 3) return "Chuyển khoản cần mã giao dịch ngân hàng";
+    if (tx.kind != "comp" && tx.kind != "tip" && tx.method == "bank" && tx.ref.size() < 3) return "Chuyển khoản cần mã giao dịch ngân hàng";
     if (utf8Len(tx.ref) > 40) return "Mã tham chiếu tối đa 40 ký tự";
     if (utf8Len(tx.note) > 200) return "Ghi chú tối đa 200 ký tự";
     for (char& ch : tx.note)
@@ -156,6 +156,12 @@ std::vector<const Tx*> CustomerLedger::of(const std::string& customer) const {
     for (const Tx& t : items_)
         if (t.customer == customer) out.push_back(&t);
     return out;
+}
+
+const Tx* CustomerLedger::tipOf(int order) const {
+    for (const Tx& t : items_)
+        if (t.kind == "tip" && t.order == order) return &t;
+    return nullptr;
 }
 
 const Tx* CustomerLedger::ofComplaint(int complaint) const {
@@ -204,6 +210,10 @@ Statement statement(const std::vector<OrderFacts>& orders, const std::vector<con
             l.amount = t->amount;
             l.text = "Bồi thường khiếu nại #" + std::to_string(t->complaint) + (t->note.empty() ? "" : ": " + t->note);
             s.comps += t->amount;
+        } else if (t->kind == "tip") {
+            l.amount = -t->amount;
+            l.text = "Tiền tip cho shipper " + t->ref + " (đơn #" + std::to_string(t->order) + ")";
+            s.tips += t->amount;
         } else if (t->kind == "payout") {
             l.amount = -t->amount;
             l.text = std::string(t->method == "bank" ? "Chuyển khoản" : "Trả tiền mặt") + " cho khách " + vnd(t->amount);
@@ -213,7 +223,7 @@ Statement statement(const std::vector<OrderFacts>& orders, const std::vector<con
             l.text = std::string("Khách nộp bù ") + (t->method == "bank" ? "(chuyển khoản)" : "(tiền mặt)");
             s.collected += t->amount;
         }
-        if (!t->note.empty() && t->kind != "comp") l.text += ": " + t->note;
+        if (!t->note.empty() && t->kind != "comp" && t->kind != "tip") l.text += ": " + t->note;
         s.lines.push_back(l);
     }
     std::stable_sort(s.lines.begin(), s.lines.end(), [](const Line& a, const Line& b) { return a.at < b.at; });

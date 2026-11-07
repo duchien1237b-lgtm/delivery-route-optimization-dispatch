@@ -7,13 +7,18 @@ var FLOW_TABLE = (() => {
     [CREATED, "reject", CANCELLED, STF, "Quản trị viên từ chối đơn"],
     [CREATED, "cancel", CANCELLED, STF | CUS, "Huỷ đơn (miễn phí)"],
     [PENDING, "cancel", CANCELLED, STF | CUS | B_SYSTEM, "Huỷ đơn (miễn phí; hệ thống tự huỷ khi không tìm được shipper)"],
-    [PENDING, "dispatch", DISPATCHED, STF | B_SYSTEM, "Hệ thống mời shipper gần nhất nhận đơn (hoặc quản trị viên phân công)"],
+    [PENDING, "dispatch", DISPATCHED, STF | B_SYSTEM, "Quản trị viên phân công tay cho một shipper (chờ shipper nhận chuyến)"],
+    [PENDING, "claim", ASSIGNED, SHP, "Shipper bấm nhận đơn trên bảng đơn chờ: ai nhận trước thì giao đơn đó"],
     [DISPATCHED, "accept", ASSIGNED, SHP, "Shipper nhận chuyến"],
     [DISPATCHED, "decline", PENDING, SHP, "Shipper từ chối chuyến"],
     [DISPATCHED, "expire", PENDING, B_SYSTEM, "Lời mời hết hạn mà shipper chưa trả lời"],
     [DISPATCHED, "unassign", PENDING, STF | B_SYSTEM, "Thu hồi phân công (shipper nghỉ, đổi tuyến)"],
     [DISPATCHED, "cancel", CANCELLED, STF | CUS, "Huỷ đơn (mất phí)"],
-    [ASSIGNED, "deliver", DELIVERED, SHP | STF | B_SYSTEM, "Giao thành công (mã xác nhận 4 số)"],
+    [ASSIGNED, "arrive", ARRIVED, SHP | STF, "Shipper bấm \"Đã giao tới\" (thu đủ tiền nếu có COD), chờ người nhận xác nhận"],
+    [ASSIGNED, "deliver", DELIVERED, STF | B_SYSTEM, "Quản trị viên xác nhận giao thay (ghi rõ lý do) hoặc đồng hồ mô phỏng tự giao"],
+    [ARRIVED, "receive", DELIVERED, CUS | STF | B_SYSTEM, "Người nhận xác nhận \"Đã nhận hàng\" (quản trị viên xác nhận thay; hệ thống tự hoàn tất khi quá hạn chờ)"],
+    [ARRIVED, "deliver", DELIVERED, STF | B_SYSTEM, "Quản trị viên xác nhận giao thay (ghi rõ lý do)"],
+    [ARRIVED, "dispute", ASSIGNED, CUS, "Người nhận báo \"Chưa nhận được hàng\": đơn quay lại Đang giao"],
     [ASSIGNED, "release", PENDING, SHP, "Shipper nhả đơn khi chưa lấy hàng (hệ thống tìm shipper khác)"],
     [ASSIGNED, "fail", -1, SHP | STF, "Giao thất bại (kèm lý do)"],
     [ASSIGNED, "unassign", PENDING, STF | B_SYSTEM, "Thu hồi phân công (shipper nghỉ, đổi tuyến)"],
@@ -32,7 +37,7 @@ function flowActorName(a) {
     return "Quản trị viên";
   return "Hệ thống";
 }
-var FLOW_ACTION_NAMES = { confirm: "xác nhận", reject: "từ chối", cancel: "huỷ", dispatch: "phân công", accept: "nhận chuyến", decline: "từ chối chuyến", deliver: "xác nhận giao", fail: "báo giao thất bại", requeue: "đưa về hàng chờ", return: "hoàn kho", unassign: "thu hồi phân công", release: "nhả đơn", expire: "hết hạn lời mời" };
+var FLOW_ACTION_NAMES = { confirm: "xác nhận", reject: "từ chối", cancel: "huỷ", dispatch: "phân công", accept: "nhận chuyến", decline: "từ chối chuyến", deliver: "xác nhận giao", fail: "báo giao thất bại", requeue: "đưa về hàng chờ", return: "hoàn kho", unassign: "thu hồi phân công", release: "nhả đơn", expire: "hết hạn lời mời", claim: "nhận đơn", arrive: "báo đã giao tới", receive: "xác nhận đã nhận hàng", dispute: "báo chưa nhận được hàng" };
 var flowActionName = (a) => FLOW_ACTION_NAMES[a] || "thực hiện";
 // "" nếu được phép (out.to = trạng thái sau), ngược lại là lý do
 function flowCheck(from, action, actor, out = null) {

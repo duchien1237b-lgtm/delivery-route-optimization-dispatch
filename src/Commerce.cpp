@@ -85,6 +85,10 @@ std::string Config::check() const {
     if (offerSeconds < 1 || offerSeconds > 600) return "Hạn trả lời lời mời phải từ 1 đến 600 giây";
     if (matchGiveUp < 0 || matchGiveUp > 240) return "Thời gian chờ shipper trước khi tự huỷ đơn phải từ 0 đến 240 phút (0 = không tự huỷ)";
     if (!(clockSpeed >= 0 && clockSpeed <= 120)) return "Tốc độ giờ ca phải từ 0 đến 120 phút ca mỗi phút thật (0 = tắt)";
+    if (missLimit < 0 || missLimit > 20) return "Số lần nhả đơn liên tiếp trước khi shipper tự tạm nghỉ phải từ 0 đến 20 (0 = tắt)";
+    if (codHoldLimit < 0 || codHoldLimit > 100000000) return "Hạn mức tiền mặt shipper được giữ phải từ 0 đến 100.000.000 đ (0 = không chặn)";
+    if (tipMax < 0 || tipMax > 1000000 || tipMax % 1000 != 0) return "Tiền tip tối đa phải từ 0 đến 1.000.000 đ, bội số 1.000 đ (0 = tắt tip)";
+    if (autoConfirmMinutes < 0 || autoConfirmMinutes > 1440) return "Thời gian chờ người nhận xác nhận phải từ 0 đến 1440 phút (0 = không tự hoàn tất)";
     return Pricing::checkTariff(Pricing::tariff());
 }
 
@@ -102,6 +106,7 @@ std::string Config::toText() const {
       << "\ndebt.limit " << debtLimit << "\n";
     o << "match.auto " << (autoMatch ? 1 : 0) << "\nmatch.offerSeconds " << offerSeconds << "\nmatch.giveUp " << matchGiveUp
       << "\nclock.speed " << num(clockSpeed) << "\n";
+    o << "match.missLimit " << missLimit << "\ncod.holdLimit " << codHoldLimit << "\ntip.max " << tipMax << "\nreceive.autoMinutes " << autoConfirmMinutes << "\n";
     return o.str();
 }
 
@@ -141,6 +146,10 @@ bool Config::loadText(const std::string& text, std::string& error) {
             else if (key == "match.offerSeconds") next.offerSeconds = std::stoi(a);
             else if (key == "match.giveUp") next.matchGiveUp = std::stoi(a);
             else if (key == "clock.speed") next.clockSpeed = std::stod(a);
+            else if (key == "match.missLimit") next.missLimit = std::stoi(a);
+            else if (key == "cod.holdLimit") next.codHoldLimit = std::stoll(a);
+            else if (key == "tip.max") next.tipMax = std::stoll(a);
+            else if (key == "receive.autoMinutes") next.autoConfirmMinutes = std::stoi(a);
         } catch (...) {
             error = "Dong cau hinh khong hop le: " + raw;
             return false;
@@ -328,7 +337,7 @@ std::string AddressBook::checkFields(const Address& a) {
     size_t l = utf8Len(a.label), r = utf8Len(a.recipient);
     if (l < 1 || l > 30 || hasControl(a.label)) return "Tên gợi nhớ của địa chỉ dài 1–30 ký tự";
     if (r < 2 || r > 60 || hasControl(a.recipient)) return "Tên người nhận dài 2–60 ký tự";
-    if (!validPhone(a.phone)) return "Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0";
+    if (!validPhone(a.phone)) return "Số điện thoại phải bắt đầu bằng số 0 và gồm 10–11 chữ số";
     if (utf8Len(a.detail) > 80 || hasControl(a.detail)) return "Địa chỉ chi tiết tối đa 80 ký tự";
     return "";
 }
@@ -572,6 +581,188 @@ double performanceScore(const ShipperStat& s, double avgStars, int ratingCount) 
     double declineRate = offered ? static_cast<double>(s.declines) / offered : 0.0;
     double score = 100.0 * (0.5 * onTime + 0.3 * (rating / 5.0) + 0.2 * (1.0 - std::min(1.0, declineRate * 2.0)));
     return std::round(score * 10.0) / 10.0;
+}
+
+// ================================= Loại hàng ==================================
+namespace {
+const std::vector<std::pair<std::string, const char*>>& categories() {
+    static const std::vector<std::pair<std::string, const char*>> c = {
+        {"tailieu", "Tài liệu"}, {"thucpham", "Thực phẩm"}, {"quanao", "Quần áo"},
+        {"dientu", "Điện tử"},   {"devo", "Hàng dễ vỡ"},    {"khac", "Khác"}};
+    return c;
+}
+}  // namespace
+const char* categoryName(const std::string& code) {
+    for (const auto& c : categories())
+        if (c.first == code) return c.second;
+    return "";
+}
+bool validCategory(const std::string& code) { return *categoryName(code) != '\0'; }
+const std::vector<std::string>& categoryCodes() {
+    static std::vector<std::string> v;
+    if (v.empty())
+        for (const auto& c : categories()) v.push_back(c.first);
+    return v;
+}
+
+// ================================= Trò chuyện trong đơn ==================================
+bool ChatStore::loadText(const std::string& text, std::string& error) {
+    std::vector<ChatMessage> out;
+    int maxId = 0, no = 0;
+    for (const std::string& raw : TextUtil::meaningfulLines(text)) {
+        ++no;
+        std::vector<std::string> c;
+        std::string rest;
+        if (!TextUtil::splitColumns(raw, 6, c, rest) || c[0] != "M" || c[5].size() != 1) {
+            error = "Tro chuyen dong " + std::to_string(no) + ": sai dinh dang";
+            return false;
+        }
+        ChatMessage m;
+        try {
+            m.id = std::stoi(c[1]);
+            m.order = std::stoi(c[2]);
+            m.at = std::stoll(c[3]);
+        } catch (...) {
+            error = "Tro chuyen dong " + std::to_string(no) + ": so khong hop le";
+            return false;
+        }
+        m.from = decodeToken(c[4]);
+        m.role = c[5][0];
+        m.text = decodeLine(rest);
+        maxId = std::max(maxId, m.id);
+        out.push_back(m);
+    }
+    items_ = out;
+    next_ = maxId + 1;
+    return true;
+}
+
+std::string ChatStore::toText() const {
+    std::ostringstream o;
+    o << "# Tro chuyen trong don: M id ma_don thoi_diem(giay) nguoi_gui vai_tro(C|S|A) noi_dung\n";
+    for (const ChatMessage& m : items_)
+        o << "M " << m.id << ' ' << m.order << ' ' << m.at << ' ' << encodeToken(m.from) << ' ' << m.role << ' ' << encodeLine(m.text) << '\n';
+    return o.str();
+}
+
+std::string ChatStore::add(ChatMessage m, int& id) {
+    for (char& ch : m.text)
+        if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
+    m.text = TextUtil::trim(m.text);
+    if (m.text.empty()) return "Hãy nhập nội dung tin nhắn";
+    if (utf8Len(m.text) > MAX_CHAT_TEXT) return "Tin nhắn tối đa 300 ký tự";
+    if (hasControl(m.text)) return "Tin nhắn có ký tự không hợp lệ";
+    if (m.role != 'C' && m.role != 'S' && m.role != 'A') return "Vai trò người gửi không hợp lệ";
+    if (static_cast<size_t>(count(m.order)) >= MAX_CHAT_PER_ORDER) return "Cuộc trò chuyện của đơn này đã đủ 200 tin";
+    m.id = id = next_++;
+    items_.push_back(m);
+    return "";
+}
+
+std::vector<const ChatMessage*> ChatStore::of(int order) const {
+    std::vector<const ChatMessage*> out;
+    for (const ChatMessage& m : items_)
+        if (m.order == order) out.push_back(&m);
+    return out;
+}
+
+int ChatStore::count(int order) const {
+    int n = 0;
+    for (const ChatMessage& m : items_) n += m.order == order;
+    return n;
+}
+
+void ChatStore::removeOrder(int order) {
+    items_.erase(std::remove_if(items_.begin(), items_.end(), [order](const ChatMessage& m) { return m.order == order; }), items_.end());
+}
+
+// ================================= Shipper yêu thích / bị chặn ==================================
+bool PrefStore::loadText(const std::string& text, std::string& error) {
+    std::vector<Pref> out;
+    int no = 0;
+    for (const std::string& raw : TextUtil::meaningfulLines(text)) {
+        ++no;
+        std::vector<std::string> c;
+        std::string rest;
+        if (!TextUtil::splitColumns(raw, 3, c, rest) || (c[0] != "F" && c[0] != "B")) {
+            error = "So thich khach dong " + std::to_string(no) + ": sai dinh dang";
+            return false;
+        }
+        out.push_back({c[0][0], decodeToken(c[1]), decodeToken(c[2])});
+    }
+    items_ = out;
+    return true;
+}
+
+std::string PrefStore::toText() const {
+    std::ostringstream o;
+    o << "# Shipper yeu thich (F) / bi chan (B) cua tung khach: loai khach ten_shipper\n";
+    for (const Pref& p : items_) o << p.kind << ' ' << encodeToken(p.customer) << ' ' << encodeToken(p.shipper) << '\n';
+    return o.str();
+}
+
+bool PrefStore::isBlocked(const std::string& customer, const std::string& shipper) const {
+    for (const Pref& p : items_)
+        if (p.kind == 'B' && p.customer == customer && p.shipper == shipper) return true;
+    return false;
+}
+bool PrefStore::isFavorite(const std::string& customer, const std::string& shipper) const {
+    for (const Pref& p : items_)
+        if (p.kind == 'F' && p.customer == customer && p.shipper == shipper) return true;
+    return false;
+}
+std::vector<std::string> PrefStore::blocked(const std::string& customer) const {
+    std::vector<std::string> out;
+    for (const Pref& p : items_)
+        if (p.kind == 'B' && p.customer == customer) out.push_back(p.shipper);
+    return out;
+}
+std::vector<std::string> PrefStore::favorites(const std::string& customer) const {
+    std::vector<std::string> out;
+    for (const Pref& p : items_)
+        if (p.kind == 'F' && p.customer == customer) out.push_back(p.shipper);
+    return out;
+}
+size_t PrefStore::countOf(const std::string& customer, char kind) const {
+    size_t n = 0;
+    for (const Pref& p : items_) n += p.kind == kind && p.customer == customer;
+    return n;
+}
+
+std::string PrefStore::apply(const std::string& customer, const std::string& shipper, const std::string& action) {
+    auto drop = [&](char kind) {
+        items_.erase(std::remove_if(items_.begin(), items_.end(),
+                                    [&](const Pref& p) { return p.kind == kind && p.customer == customer && p.shipper == shipper; }),
+                     items_.end());
+    };
+    if (action == "block") {
+        if (isBlocked(customer, shipper)) return "Bạn đã chặn shipper này rồi";
+        if (countOf(customer, 'B') >= MAX_PREFS) return "Bạn chỉ chặn được tối đa 10 shipper, hãy bỏ chặn bớt";
+        drop('F');
+        items_.push_back({'B', customer, shipper});
+    } else if (action == "unblock") {
+        if (!isBlocked(customer, shipper)) return "Shipper này không nằm trong danh sách chặn";
+        drop('B');
+    } else if (action == "fav") {
+        if (isFavorite(customer, shipper)) return "Shipper này đã ở trong danh sách yêu thích";
+        if (countOf(customer, 'F') >= MAX_PREFS) return "Bạn chỉ có tối đa 10 shipper yêu thích, hãy bỏ bớt";
+        drop('B');
+        items_.push_back({'F', customer, shipper});
+    } else if (action == "unfav") {
+        if (!isFavorite(customer, shipper)) return "Shipper này không nằm trong danh sách yêu thích";
+        drop('F');
+    } else {
+        return "Thao tác không hợp lệ";
+    }
+    return "";
+}
+
+void PrefStore::renameShipper(const std::string& oldName, const std::string& newName) {
+    for (Pref& p : items_)
+        if (p.shipper == oldName) p.shipper = newName;
+}
+void PrefStore::removeCustomer(const std::string& customer) {
+    items_.erase(std::remove_if(items_.begin(), items_.end(), [&](const Pref& p) { return p.customer == customer; }), items_.end());
 }
 
 }  // namespace Commerce

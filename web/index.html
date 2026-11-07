@@ -10,7 +10,6 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
-  <meta name="google-site-verification" content="U0gXAYmC7KJMlFtfeUiF37Q9yG_GYrMV3ZOfrVJ7hYU"/>
 </head>
 <body>
   <!-- Bản đồ phủ toàn màn hình, mọi thứ khác nổi phía trên -->
@@ -23,8 +22,10 @@
         <button class="tool" data-layer="routes" title="Lộ trình shipper đang chạy" aria-label="Lớp lộ trình shipper" aria-pressed="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8.2 18H14a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h5.8"/></svg></button>
         <button class="tool" data-layer="restricted" title="Đường cấm một số loại xe (xe tải...)" aria-label="Lớp đường cấm tải" aria-pressed="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="m6.3 6.3 11.4 11.4"/></svg></button>
         <button class="tool" data-layer="zone" title="Vùng nội thành: cụm điểm kho đi tới được" aria-label="Lớp vùng nội thành" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M5 8.5 11 4l8 4.5-1.5 8L10 20 4.5 15z"/></svg></button>
+        <button class="tool" data-layer="graph" title="Đồ thị đồ án (đoạn đường giữa các điểm) trên nền Google Maps" aria-label="Lớp đồ thị đồ án" aria-pressed="true"><svg viewBox="0 0 24 24"><circle cx="5.5" cy="6" r="2"/><circle cx="18.5" cy="8" r="2"/><circle cx="9" cy="18" r="2"/><path d="m7.3 6.5 9.2 1.2M6.5 7.9l1.8 8.2M10.8 17l6-7.4"/></svg></button>
       </div>
       <div class="ctl-group">
+        <button class="tool" id="gm-btn" title="Nền bản đồ: sơ đồ hoặc Google Maps" aria-label="Nền bản đồ" aria-haspopup="dialog" aria-expanded="false" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.4 3.8 5.3 3.8 8.5s-1.2 6.1-3.8 8.5c-2.6-2.4-3.8-5.3-3.8-8.5S9.4 5.9 12 3.5z"/></svg></button>
         <button class="tool" id="zoom-fit" title="Vừa khung cụm chính (F)" aria-label="Vừa khung"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="7.5"/></svg></button>
         <button class="tool" id="zoom-all" title="Xem mọi điểm (A)" aria-label="Xem mọi điểm"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span class="tool-count" id="all-count" hidden></span></button>
         <button class="tool km" id="toggle-km" title="Hiện số km trên từng đoạn (K)" aria-pressed="false">km</button>
@@ -36,6 +37,23 @@
     </div>
     <div class="tooltip" id="tooltip" hidden></div>
   </section>
+
+  <!-- Bảng chọn nền bản đồ (ngoài .stage để nổi trên cả khung điều khiển bên dưới ở điện thoại) -->
+  <div class="gm-pop" id="gm-pop" role="dialog" aria-label="Nền bản đồ" hidden>
+    <h3>Nền bản đồ</h3>
+    <small class="muted">OpenStreetMap là mặc định: miễn phí, không cần khoá hay thẻ; đường đi thật lấy từ máy chủ OSRM công cộng (ô tô). Google Maps là tuỳ chọn khi bạn có khoá API.</small>
+    <div class="seg" id="gm-seg" role="radiogroup" aria-label="Chọn nền bản đồ">
+      <button type="button" role="radio" data-base="osm" aria-checked="false">OpenStreetMap</button>
+      <button type="button" role="radio" data-base="google" aria-checked="false">Google Maps</button>
+      <button type="button" role="radio" data-base="schematic" aria-checked="false">Sơ đồ</button>
+    </div>
+    <label class="field"><span>Khoá API Google Maps</span><input id="gm-key" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…"></label>
+    <label class="check"><input type="checkbox" id="gm-traffic"> Tính giao thông thực tế khi ước tính thời gian (ô tô; Google tính phí cao hơn)</label>
+    <small class="muted">Google Maps lo bản đồ và đường đi thật; khoá chỉ lưu trong trình duyệt này, không nằm trong repo. Cần bật <b>Maps JavaScript API</b> và <b>Routes API</b>. Chưa có khoá, mất mạng hay hết hạn mức thì tự dùng sơ đồ và thuật toán Dijkstra của đồ án. Cách tạo khoá: mục “Tích hợp Google Maps” trong README.</small>
+    <div class="acts"><button type="button" class="btn small primary" id="gm-save">Lưu và dùng Google Maps</button><button type="button" class="btn small ghost danger" id="gm-clear">Xoá khoá</button></div>
+    <p class="gm-status" id="gm-status" role="status"></p>
+    <p class="gm-stats muted" id="gm-stats"></p>
+  </div>
 
   <!-- Ô tìm kiếm nổi + bộ dữ liệu -->
   <header class="topcard">
@@ -149,6 +167,7 @@
     </div>
   </dialog>
 
+  <script src="gmaps-key.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

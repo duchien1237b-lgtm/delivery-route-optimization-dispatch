@@ -313,7 +313,7 @@ function checkEmail(e) {
     return bad;
   return "";
 }
-var checkPhone = (p) => validPhone(p) ? "" : "Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0";
+var checkPhone = (p) => validPhone(p) ? "" : "Số điện thoại phải bắt đầu bằng số 0 và gồm 10–11 chữ số";
 function checkDisplayName(n) {
   const len = ulen(n);
   if (len < 2)
@@ -947,8 +947,7 @@ var RULES = (() => {
     ["POST", "import/shippers", A, g4, "Nhập shippers.txt"],
     ["POST", "save", A, g4, "Lưu bản đồ và đơn hàng"],
     ["GET", "benchmark", A, g4, "Đo hiệu năng thuật toán"],
-    ["GET", "benchmark/p2p", A, g4, "Đo hiệu năng A* và Dijkstra"],
-    ["GET", "path", U, g5, "Đường đi ngắn nhất (Dijkstra, A*, Bellman-Ford, BFS)"],
+    ["GET", "path", U, g5, "Đường đi ngắn nhất (Dijkstra, Bellman-Ford, BFS)"],
     ["GET", "kpaths", U, g5, "K tuyến ngắn nhất (Yen)"],
     ["GET", "estimate", U, g5, "Dự toán chuyến nhiều điểm"],
     ["GET", "timeprofile", U, g5, "Thời gian đi theo giờ xuất phát"],
@@ -973,9 +972,19 @@ var RULES = (() => {
     ["POST", "order/confirm", ST, g6, "Xác nhận đơn mới (Mới → Chờ giao)"],
     ["POST", "order/reject", ST, g6, "Từ chối đơn mới (kèm lý do)"],
     ["POST", "order/cancel", C | ST, g6, "Huỷ đơn (theo quy tắc và phí huỷ)"],
-    ["POST", "order/deliver", S | ST, g6, "Xác nhận đã giao bằng mã 4 số"],
+    ["POST", "track/confirm", ALL5, g6, "Người nhận (không cần tài khoản) xác nhận “Đã nhận hàng” / báo chưa nhận bằng mã đơn + SĐT"],
+    ["POST", "order/claim", S, g6, "Shipper nhận đơn trên bảng đơn chờ (ai bấm trước được đơn)"],
+    ["GET", "orders/open", S, g6, "Bảng đơn chờ nhận của shipper"],
+    ["POST", "order/arrive", S | ST, g6, "Shipper báo “Đã giao tới” (thu đủ tiền nếu có COD), chờ người nhận xác nhận"],
+    ["POST", "order/receive", C | ST, g6, "Người nhận / khách xác nhận “Đã nhận hàng” để hoàn tất đơn"],
+    ["POST", "order/dispute", C, g6, "Người nhận báo “Chưa nhận được hàng” (đơn quay lại Đang giao)"],
+    ["POST", "order/deliver", ST, g6, "Quản trị viên xác nhận giao thay (bắt buộc ghi lý do)"],
     ["POST", "order/rate", C, g6, "Đánh giá shipper (1–5 sao)"],
-    ["POST", "order/rate-customer", S, g6, "Shipper đánh giá khách hàng (1–5 sao)"],
+    ["POST", "order/tip", C, g6, "Khách tip cho shipper sau khi giao (trừ vào ví)"],
+    ["GET", "order/chat", C | S | A, g6, "Xem trò chuyện trong đơn (khách, shipper, tổng đài)"],
+    ["POST", "order/chat/send", C | S | A, g6, "Nhắn tin trong đơn khi shipper đang giao"],
+    ["GET", "customer/shippers", C, g2, "Shipper yêu thích / bị chặn / đã từng giao"],
+    ["POST", "customer/shipper-pref", C, g2, "Thêm / bỏ shipper yêu thích, chặn / bỏ chặn shipper"],
     ["POST", "order/retry", C | ST, g6, "Tìm lại shipper cho đơn chưa có ai nhận"],
     ["POST", "order/release", S, g6, "Shipper nhả đơn đã nhận khi chưa lấy hàng (kèm lý do)"],
     ["GET", "orders/list", U, g6, "Danh sách đơn (tìm kiếm, lọc, sắp xếp, phân trang)"],

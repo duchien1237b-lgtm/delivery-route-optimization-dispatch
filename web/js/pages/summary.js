@@ -7,7 +7,7 @@ import { escapeHtml } from '../store.js';
 import { fmt, money, guard, ROLE_LABEL, when } from '../ui.js';
 
 let ctx, root, rep = null;
-const COLORS = { 'Đã giao': 'var(--go)', 'Đang giao': 'var(--road)', 'Đã phân công': 'var(--s3)', 'Chờ giao': 'var(--signal)', 'Mới': 'var(--violet)', 'Thất bại': 'var(--stop)', 'Hoàn kho': 'var(--jam)', 'Đã huỷ': 'var(--surface-3)' };
+const COLORS = { 'Đã giao': 'var(--go)', 'Đang giao': 'var(--road)', 'Đã phân công': 'var(--s3)', 'Chờ xác nhận': 'var(--jam)', 'Chờ giao': 'var(--signal)', 'Mới': 'var(--violet)', 'Thất bại': 'var(--stop)', 'Hoàn kho': 'var(--jam)', 'Đã huỷ': 'var(--surface-3)' };
 
 function bars(by) {
   const rows = Object.entries(by);

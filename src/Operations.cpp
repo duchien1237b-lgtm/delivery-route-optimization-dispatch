@@ -390,7 +390,7 @@ void ShiftManager::reset(std::vector<Order>& orders, bool keepFinal) {
     standby_.clear();
     events_.clear();
     for (Order& o : orders) {
-        if (keepFinal && (o.status == DELIVERED || o.status == CANCELLED || o.status == RETURNED || o.status == CREATED)) continue;
+        if (keepFinal && (o.status == DELIVERED || o.status == CANCELLED || o.status == RETURNED || o.status == CREATED || o.status == ARRIVED)) continue;
         o.attempts = 0;
         o.failReason = -1;
         o.status = PENDING;
@@ -399,6 +399,7 @@ void ShiftManager::reset(std::vector<Order>& orders, bool keepFinal) {
         o.deliveredAt = -1;
         o.tried.clear();
         o.noShipperAt = 0;
+        o.opened = false;
     }
     trips_.clear();
     clock_ = 0;
@@ -494,9 +495,29 @@ int ShiftManager::decline(int tripId, std::vector<Order>& orders, const std::str
     return -1;
 }
 
-bool ShiftManager::deliver(int orderId, std::vector<Order>& orders, double at) {
+bool ShiftManager::arrive(int orderId, std::vector<Order>& orders, double at) {
     Order* o = findOrder(orderId, orders);
     if (!o || o->status != ASSIGNED) return false;
+    o->status = ARRIVED;
+    o->deliveredAt = at;
+    setStandby(o->shipper, o->destination);   // shipper đã tới nơi giao: rảnh để nhận đơn khác trong lúc chờ người nhận xác nhận
+    log(at, "arrived", o->id, o->shipper, "");
+    return true;
+}
+
+bool ShiftManager::reopenDelivery(int orderId, std::vector<Order>& orders) {
+    Order* o = findOrder(orderId, orders);
+    if (!o || o->status != ARRIVED) return false;
+    o->status = ASSIGNED;
+    o->deliveredAt = -1;
+    log(clock_, "disputed", o->id, o->shipper, "");
+    return true;
+}
+
+bool ShiftManager::deliver(int orderId, std::vector<Order>& orders, double at) {
+    Order* o = findOrder(orderId, orders);
+    if (!o || (o->status != ASSIGNED && o->status != ARRIVED)) return false;
+    if (o->status == ARRIVED) at = o->deliveredAt >= 0 ? o->deliveredAt : at;   // giờ giao là lúc shipper tới nơi
     o->status = DELIVERED;
     o->deliveredAt = at;
     setStandby(o->shipper, o->destination);

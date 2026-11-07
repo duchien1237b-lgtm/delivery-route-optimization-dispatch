@@ -15,7 +15,9 @@ make test       # 8 bộ kiểm thử, kết quả: TẤT CẢ ... ĐỀU ĐẠT
 
 Không muốn biên dịch? Mở thẳng **`dieu-phoi-giao-hang.html`** bằng trình duyệt (bản một file, cùng thuật toán, dữ liệu lưu trong trình duyệt).
 
-Tài khoản dùng thử: `admin` / `admin123` (quản trị viên), `tuan` / `shipper123` (shipper), `anphat` / `khach123` (khách hàng). Bảng đầy đủ ở [Cài đặt và chạy](#cài-đặt-và-chạy). Để xem ghép đơn kiểu Grab, mở 2 cửa sổ ẩn danh: một khách đặt đơn, một shipper `tuan` bấm *Nhận đơn*.
+Bản đồ chính là **Google Maps** (nền thật, đường đi thật, tìm đường ngắn nhất trên Google): bấm nút quả cầu trên bản đồ và dán khoá API của bạn, xem [Tích hợp Google Maps](#tích-hợp-google-maps). Không có khoá thì tự dùng sơ đồ và thuật toán của đồ án.
+
+Tài khoản mẫu (gõ tay ở trang đăng nhập, không còn nút bấm sẵn): `admin` / `admin123` (quản trị viên), `tuan` / `shipper123` (shipper), `anphat` / `khach123` (khách hàng). Bảng đầy đủ ở [Cài đặt và chạy](#cài-đặt-và-chạy). Để xem ghép đơn kiểu Grab, mở 2 cửa sổ ẩn danh: một khách đặt đơn, một shipper `tuan` bấm *Nhận đơn*.
 
 > Bài tập lớn môn **Cấu trúc dữ liệu & Giải thuật**, **Đề tài 08**: *Hệ thống Tìm đường & Điều phối Giao hàng Tối ưu*.
 > Cấu trúc dữ liệu chính: **đồ thị có trọng số** (danh sách kề), **Min-Heap tự cài**, **ngăn xếp** (hoàn tác), **cây Trie** (tìm kiếm). Thuật toán: **Dijkstra** (3 phiên bản), **A\***, **BFS/DFS**, **Bellman-Ford**, **Yen (K tuyến ngắn nhất)**, **TSP bitmask**, **tìm kiếm cục bộ** (relocate, 2-opt) cho điều phối, **Dijkstra phụ thuộc thời gian** (giờ cao điểm).
@@ -23,6 +25,8 @@ Tài khoản dùng thử: `admin` / `admin123` (quản trị viên), `tuan` / `s
 Ứng dụng web chạy trên máy cá nhân: **backend viết hoàn toàn bằng C++17** (mọi thuật toán chạy ở C++), giao diện HTML/CSS/JavaScript thuần do chính chương trình C++ phục vụ. Không cần cài Node.js, Python hay cơ sở dữ liệu.
 
 Phiên bản này nâng phần tài khoản lên như một **website giao hàng thật**: đăng ký / đăng nhập / quên mật khẩu bằng mã OTP, **3 vai trò + khách vãng lai** với ma trận quyền kiểm tra ở mọi API, đơn hàng theo **máy trạng thái** (sai thì HTTP 409), mã giao hàng 4 số, sổ COD, mã giảm giá, hạng thân thiết, khiếu nại, thông báo và nhật ký kiểm toán. Các thuật toán cốt lõi giữ nguyên, 6 bộ kiểm thử cũ vẫn đạt (xem [Thay đổi so với bản gốc](#thay-đổi-so-với-bản-gốc)). Có thêm **bản một file** `dieu-phoi-giao-hang.html` mở thẳng bằng trình duyệt, không cần server (xem [Bản một file HTML](#bản-một-file-html)).
+
+**Vòng 15 (mới nhất): nhận đơn tự do + giao hàng hai bước + bỏ A\*.** Đơn khách đặt hiện trên bảng *Đơn chờ nhận* cho **mọi shipper**, ai bấm nhận trước thì giao (người sau nhận thông báo đã có người nhận); shipper bấm *Đã giao tới* rồi **người nhận bấm *Đã nhận hàng*** mới hoàn tất (không còn mã 4 số, không còn shipper đánh giá khách; người nhận không phản hồi thì tự hoàn tất). Số điện thoại chỉ cần bắt đầu bằng 0. Thuật toán A\* đã bị xoá. Chi tiết ở mục [Nhận đơn tự do và giao hàng hai bước](#nhận-đơn-tự-do-và-giao-hàng-hai-bước-v15) và Giả định 86–93; các đoạn mô tả vòng 4 và v12 bên dưới là lịch sử, phần nào mâu thuẫn thì **v15 thay thế**.
 
 **Vòng 4: bỏ vai trò điều phối viên, ghép đơn tự động kiểu Grab.** Khách đặt đơn xong, hệ thống tự tìm **shipper gần kho nhất** (Dijkstra theo thời gian, đúng loại xe, có tính giờ cao điểm) và gửi **lời mời nhận đơn có đồng hồ đếm ngược** (mặc định 45 giây). Shipper bấm **Nhận đơn** thì mới đi giao; bấm *Bỏ qua* hoặc để hết giờ thì lời mời chuyển cho shipper gần kế tiếp; hết người thì khách được báo và có nút *Tìm lại shipper*. Khách thấy shipper chạy trên bản đồ, thẻ tài xế (tên, xe, biển số, điểm), huỷ đơn kèm lý do, đánh giá shipper; shipper đánh giá lại khách. Quyền của điều phối viên cũ chuyển sang quản trị viên. Chi tiết ở mục [Ghép đơn tự động kiểu Grab](#ghép-đơn-tự-động-kiểu-grab) và [Giả định](#giả-định) (35–54).
 
@@ -47,10 +51,15 @@ Phiên bản này nâng phần tài khoản lên như một **website giao hàng
 - [Kịch bản demo theo vai trò](#kịch-bản-demo-theo-vai-trò)
 - [REST API](#rest-api)
 - [Kiểm thử](#kiểm-thử)
+- [Tích hợp Google Maps](#tích-hợp-google-maps)
+- [Thiết kế lại (v14)](#thiết-kế-lại-v14)
+- [Hoàn thiện giao diện và bản đồ (v13)](#hoàn-thiện-giao-diện-và-bản-đồ-v13)
+- [Kiểm tra toàn diện (v12.2)](#kiểm-tra-toàn-diện-v122)
 - [Bản một file HTML](#bản-một-file-html)
 - [Thay đổi so với bản gốc](#thay-đổi-so-với-bản-gốc)
 - [Phân công](#phân-công)
 - [Đưa lên GitHub](#đưa-lên-github)
+- [Nhận đơn tự do và giao hàng hai bước (v15)](#nhận-đơn-tự-do-và-giao-hàng-hai-bước-v15)
 - [Giả định](#giả-định)
 
 ---
@@ -78,6 +87,7 @@ Phiên bản này nâng phần tài khoản lên như một **website giao hàng
 | **Khai giá, bảo hiểm, cân quy đổi, người trả cước** | Khách khai **giá trị hàng**: trên 1.000.000 đ thu **phí bảo hiểm 0,5%** giá trị (làm tròn lên 500 đ), dưới mức đó miễn phí. Nhập **dài × rộng × cao** (cm) thì cước tính theo **cân quy đổi** = D×R×C ÷ 6.000 (lấy số lớn hơn giữa cân thật và cân quy đổi), điều phối vẫn dùng cân thật để xếp tải. Chọn **người nhận trả cước**: shipper thu của người nhận *thu hộ + cước*, nhập sai số tiền bị từ chối. **Phí hoàn hàng** (50% cước vận chuyển) được tính và ghi vào đơn khi đơn về kho. Báo giá, hoá đơn, phiếu in đều hiện đủ các khoản | `Billing`, `Commerce`, `WebOrders` |
 | **Khách tự phục vụ** | **Tự sửa đơn** khi chưa có shipper nhận (cước, bảo hiểm, mã giảm giá tính lại; hệ thống mời lại shipper từ đầu), **đặt lại** đơn cũ bằng một nút, đơn giao thất bại thì **hẹn giao lại** (đổi SĐT người nhận, lời nhắn cho shipper) hoặc **yêu cầu hoàn hàng** (báo trước phí hoàn). Hạn giao phải ở tương lai so với đồng hồ ca và trong 24 giờ | `WebOrders`, `OrderFlow` |
 | **Ví đối soát khách hàng** | Sổ tiền giữa công ty và từng khách: cộng **tiền thu hộ** đã giao (chỉ rút được khi khoản COD đó đã được đối soát), **bồi thường**, khách **nộp bù**; trừ **cước người gửi trả**, **phí huỷ**, **phí hoàn**, các lần **chi trả**. Khách xem sao kê, số dư, số có thể rút; **quản trị viên** xem số dư mọi khách, chi trả (chuyển khoản bắt buộc mã giao dịch) hoặc ghi nhận nộp bù, không chi quá số có thể rút (`customer_ledger.txt`). Sao kê có **số dư luỹ kế từng dòng**, lọc *tiền vào / tiền ra / chờ đối soát*, lọc **theo khoảng ngày**, phân trang và **xuất CSV** (mở bằng Excel); nhân viên tìm khách không dấu và lọc *còn tiền / đang nợ / chờ đối soát*. **Hạn mức nợ phí**: khách nợ quá mức cấu hình (mặc định 500.000 đ) thì không tự đặt đơn mới (HTTP 409, báo rõ số nợ) cho tới khi nộp bù; nhân viên vẫn tạo đơn hộ được | `Billing`, `WebOrders` |
+| **Nghiệp vụ kiểu Grab v12** | **Loại hàng + cam kết hàng cấm** khi đặt đơn (tài liệu, thực phẩm, quần áo, điện tử, hàng dễ vỡ, khác; shipper thấy loại hàng và cảnh báo *dễ vỡ* trên lời mời); **trò chuyện trong đơn** giữa khách, shipper và tổng đài (câu trả lời nhanh, chống spam 20 tin / 60 giây, tối đa 300 ký tự, khoá khi đơn kết thúc); **tip cho shipper** sau khi giao (trừ ví, một lần, trong 7 ngày, shipper nhận 100%); **shipper yêu thích / chặn shipper** (yêu thích được mời trước, bị chặn không bao giờ được mời cho đơn của khách đó); **hạn mức tiền mặt COD** (shipper đang giữ quá mức thì không được mời đơn thu hộ); **tự tạm nghỉ** khi bỏ lỡ / bỏ qua liên tiếp quá `match.missLimit` lời mời | `Commerce`, `Billing`, `WebOrders` |
 | **Bồi thường khiếu nại** | Nhân viên bồi thường vào ví khách ngay trong phiếu khiếu nại, **mỗi phiếu một lần**, có **trần** theo loại: trễ hạn ≤ cước (chỉ khi đơn thật sự giao trễ), hư hỏng / thất lạc ≤ giá trị khai (không khai giá thì ≤ 4 × cước, chỉ khi hàng đã rời kho). Khách nhận thông báo, phiếu ghi rõ số tiền | `Billing`, `Support` |
 | **Điều phối tay & thu hồi chuyến (quản trị viên)** | Trang *Đơn hàng* → *Chờ giao*: tích chọn nhiều đơn rồi **phân công cho một shipper** (thứ tự giao vẫn do thuật toán *Theo hạn giao* xếp, đơn quá tải trọng hoặc xe không tới được thì ở lại hàng chờ). Shipper không phản hồi thì quản trị viên **thu hồi chuyến / lời mời** chưa nhận kèm lý do: đơn về *Chờ giao*, không tính là shipper từ chối, shipper nhận thông báo | `WebOrders`, `Operations` |
 | **Cảnh báo vận hành & doanh thu theo ngày** | Trang *Thống kê* của nhân viên có bảng **Cần xử lý**: đơn đang giao dự kiến trễ, đơn thất bại chờ quyết định, đơn mới chờ xác nhận quá 30 phút, đơn nặng hơn mọi xe, đơn hoả tốc chờ điều phối, chuyến chờ shipper nhận, phiếu nộp COD chờ đối soát, khiếu nại mở quá 24 giờ, khách đang nợ phí; bấm để mở đúng trang. Quản trị viên có thêm **doanh thu 14 ngày** (giờ Việt Nam), phí bảo hiểm, phí hoàn | `WebOrders` |
@@ -137,7 +147,7 @@ Ngoài web còn có **menu dòng lệnh** (`delivery --console`) với đủ ch�
 | ![](docs/screenshots/01-guest-landing.png) | ![](docs/screenshots/03-register-validation.png) |
 | **Đăng ký shipper (loại xe, tải trọng, biển số)** | **Shipper chờ duyệt đăng nhập: thông báo rõ ràng** |
 | ![](docs/screenshots/06-register-shipper.png) | ![](docs/screenshots/07-login-pending-shipper.png) |
-| **Đăng nhập: tên / email / SĐT, ghi nhớ, tài khoản dùng thử** | **Khách tạo đơn: COD, mã giảm giá, báo giá = hoá đơn** |
+| **Đăng nhập: tên / email / SĐT, ghi nhớ** | **Khách tạo đơn: COD, mã giảm giá, báo giá = hoá đơn** |
 | ![](docs/screenshots/08-login.png) | ![](docs/screenshots/09-customer-create-order.png) |
 | **Quản trị viên (chế độ thủ công): hàng đơn mới chờ xác nhận** | **Quản trị viên: so sánh phương án, áp dụng** |
 | ![](docs/screenshots/11-admin-queue.png) | ![](docs/screenshots/12-admin-plan.png) |
@@ -320,7 +330,7 @@ g++ -std=c++17 -O2 -Isrc -Ithird_party -D_WIN32_WINNT=0x0A00 src/*.cpp -o delive
 ./delivery --no-demo          # tắt chế độ demo: không có hộp thư giả lập (mã OTP chỉ in ra nhật ký server)
 ```
 
-Mở trình duyệt sẽ thấy **trang giới thiệu cho khách vãng lai** (báo giá thử, tra cứu đơn) và nút **Đăng nhập / Đăng ký**. Tài khoản dùng thử (bấm thẳng vào nút ở màn đăng nhập cũng được):
+Mở trình duyệt sẽ thấy **trang giới thiệu cho khách vãng lai** (báo giá thử, tra cứu đơn) và nút **Đăng nhập / Đăng ký**. Tài khoản mẫu (gõ tay vào ô đăng nhập):
 
 | Vai trò | Tên đăng nhập | Mật khẩu | Vào thẳng trang |
 |---|---|---|---|
@@ -346,7 +356,7 @@ Chương trình tự tìm thư mục `web/` và `data/`, nên có thể chạy t
 │   ├── Traversal.h / .cpp      # BFS, DFS, liên thông, Kosaraju, vùng giao hàng
 │   ├── FileIO.h / .cpp         # Đọc/ghi map.txt, orders.txt (file và chuỗi)
 │   ├── MinHeap.h               # MinHeap<T> và IndexedMinHeap (decreaseKey) tự cài
-│   ├── ShortestPath.h / .cpp   # Dijkstra 3 phiên bản, A*, Yen, getPath, benchmark
+│   ├── ShortestPath.h / .cpp   # Dijkstra 3 phiên bản, Yen, getPath, benchmark
 │   ├── BellmanFord.h / .cpp    # Bellman-Ford, tìm chu trình âm
 │   ├── Estimator.h / .cpp      # Dự toán chi phí và thời gian tuyến
 │   ├── Dispatcher.h / .cpp     # Điều phối: hàng đợi ưu tiên, NN, 2-opt, TSP, CVRP
@@ -362,7 +372,7 @@ Chương trình tự tìm thư mục `web/` và `data/`, nên có thể chạy t
 │   ├── TextUtil.h              # Tiện ích chuỗi UTF-8 (cắt đúng ký tự, đếm ký tự)
 │   ├── History.h               # Hoàn tác / làm lại bằng hai ngăn xếp
 │   ├── Trie.h / .cpp           # Cây tiền tố tìm điểm theo tên (bỏ dấu tiếng Việt); TextIndex tìm trong danh sách
-│   ├── Trace.h / .cpp          # Ghi từng bước Dijkstra / A* / BFS / DFS / Bellman-Ford cho trang Mô phỏng
+│   ├── Trace.h / .cpp          # Ghi từng bước Dijkstra / BFS / DFS / Bellman-Ford cho trang Mô phỏng
 │   ├── Json.h                  # Bộ dựng JSON tối giản cho API
 │   ├── WebServer.h / .cpp      # REST API + phục vụ giao diện web, xác thực / phân quyền mọi request, ghi file nguyên tử
 │   ├── WebAccount.inc          # API tài khoản: đăng ký, đăng nhập, mật khẩu, hồ sơ, thiết bị, sổ địa chỉ, quản lý tài khoản
@@ -397,11 +407,11 @@ Chương trình tự tìm thư mục `web/` và `data/`, nên có thể chạy t
 │   ├── test_traversal_fileio.cpp   # 41 kiểm tra: duyệt đồ thị, đọc/ghi file, bắt lỗi file
 │   ├── test_algorithms.cpp         # 382 kiểm tra: heap, Dijkstra, Bellman-Ford, dự toán, điều phối
 │   ├── test_extensions.cpp         # 3.693 kiểm tra: Tarjan, MST, Floyd–Warshall, tình huống đặc biệt trong ca
-│   ├── test_features.cpp           # 1.664 kiểm tra: kẹt xe, hoàn tác, Trie, Yen, ca giao, giờ cao điểm, A*, mô phỏng, theo hạn giao
+│   ├── test_features.cpp           # 562 kiểm tra: kẹt xe, hoàn tác, Trie, Yen, ca giao, giờ cao điểm, mô phỏng, theo hạn giao
 │   ├── test_auth.cpp               # 206 kiểm tra: SHA-256 theo vector chuẩn, băm mật khẩu, users.txt, tài khoản, phiên, khoá, phân quyền
-│   ├── test_business.cpp           # 108 kiểm tra: trường COD / người nhận trong file, biểu phí, lý do thất bại, shipper bận, tài chính ca, nhật ký
+│   ├── test_business.cpp           # 109 kiểm tra: trường COD / người nhận trong file, biểu phí, lý do thất bại, shipper bận, tài chính ca, nhật ký
 │   ├── test_commerce.cpp           # 944 kiểm tra (mới): mật khẩu, khoá luỹ tiến, OTP, vòng đời tài khoản, máy trạng thái đơn, COD, mã giảm giá...
-│   └── test_web.cpp                # 974 kiểm tra (mới): chạy server thật, gọi HTTP: đăng ký / đăng nhập, ma trận quyền 4 chủ thể × mọi API, ghép đơn tự động, IDOR, CSRF...
+│   └── test_web.cpp                # 1.057 kiểm tra (nhận đơn tự do, giao hai bước): chạy server thật, gọi HTTP: đăng ký / đăng nhập, ma trận quyền 4 chủ thể × mọi API, ghép đơn tự động, IDOR, CSRF...
 ├── standalone/                 # Mã nguồn bản một file: engine/*.js (bản JavaScript của backend C++), api.js thay cho web/js/api.js
 ├── dieu-phoi-giao-hang.html    # Bản một file đã build (mở thẳng bằng trình duyệt)
 ├── tools/
@@ -456,19 +466,42 @@ flowchart LR
 
 ```mermaid
 stateDiagram-v2
-    state "Chờ duyệt" as P
-    state "Hoạt động" as A
-    state "Bị khoá" as L
-    state "Vô hiệu hoá" as D
-    [*] --> A: khách hàng tự đăng ký / quản trị viên tạo
-    [*] --> P: shipper tự đăng ký
-    P --> A: duyệt (QT), thêm vào đội xe
-    P --> D: từ chối (QT, bắt buộc lý do)
-    A --> L: khoá (QT, bắt buộc lý do)
-    A --> D: vô hiệu hoá (QT, bắt buộc lý do)
-    L --> A: mở khoá
-    L --> D: vô hiệu hoá
-    D --> A: kích hoạt lại
+    state "Chờ giao" as S0
+    state "Đang giao" as S1
+    state "Đã giao" as S2
+    state "Thất bại" as S3
+    state "Đã huỷ" as S4
+    state "Hoàn kho" as S5
+    state "Mới" as S6
+    state "Đã phân công" as S7
+    state "Chờ xác nhận" as S8
+    [*] --> S6: khách tạo đơn
+    S6 --> S0: confirm (QT)
+    S6 --> S4: reject (QT)
+    S6 --> S4: cancel (KH/QT)
+    S0 --> S4: cancel (KH/QT/HT)
+    S0 --> S7: dispatch (QT/HT)
+    S0 --> S1: claim (SP)
+    S7 --> S1: accept (SP)
+    S7 --> S0: decline (SP)
+    S7 --> S0: expire (HT)
+    S7 --> S0: unassign (QT/HT)
+    S7 --> S4: cancel (KH/QT)
+    S1 --> S8: arrive (SP/QT)
+    S1 --> S2: deliver (QT/HT)
+    S8 --> S2: receive (KH/QT/HT)
+    S8 --> S2: deliver (QT/HT)
+    S8 --> S1: dispute (KH)
+    S1 --> S0: release (SP)
+    S1 --> S3: fail (SP/QT)
+    S1 --> S0: unassign (QT/HT)
+    S1 --> S4: cancel (KH/QT)
+    S3 --> S0: requeue (KH/QT)
+    S3 --> S5: return (KH/QT)
+    S3 --> S4: cancel (QT)
+    S2 --> [*]
+    S5 --> [*]
+    S4 --> [*]
 ```
 
 QT = quản trị viên (vai trò điều phối viên đã bỏ ở vòng 4). Không ai tự đổi trạng thái của chính mình; tài khoản rời trạng thái *Hoạt động* bị đăng xuất khỏi mọi thiết bị; mọi lần đổi đều ghi nhật ký kiểm toán và gửi email (hộp thư giả lập). Đăng nhập vào tài khoản *Chờ duyệt* / *Bị khoá* / *Vô hiệu hoá* nhận thông báo rõ ràng (kèm lý do) **chỉ khi mật khẩu đúng**, nên không dùng được để dò tài khoản.
@@ -552,9 +585,8 @@ Bảng sinh tự động từ bảng quy tắc trong `src/Auth.cpp` (`Auth::matr
 | Nhập shippers.txt | `POST /api/import/shippers` | – | – | – | ✓ |
 | Lưu bản đồ và đơn hàng | `POST /api/save` | – | – | – | ✓ |
 | Đo hiệu năng thuật toán | `GET /api/benchmark` | – | – | – | ✓ |
-| Đo hiệu năng A* và Dijkstra | `GET /api/benchmark/p2p` | – | – | – | ✓ |
 | **Tìm đường (chỉ đọc)** | | | | | |
-| Đường đi ngắn nhất (Dijkstra, A*, Bellman-Ford, BFS) | `GET /api/path` | – | ✓ | ✓ | ✓ |
+| Đường đi ngắn nhất (Dijkstra, Bellman-Ford, BFS) | `GET /api/path` | – | ✓ | ✓ | ✓ |
 | K tuyến ngắn nhất (Yen) | `GET /api/kpaths` | – | ✓ | ✓ | ✓ |
 | Dự toán chuyến nhiều điểm | `GET /api/estimate` | – | ✓ | ✓ | ✓ |
 | Thời gian đi theo giờ xuất phát | `GET /api/timeprofile` | – | ✓ | ✓ | ✓ |
@@ -569,6 +601,7 @@ Bảng sinh tự động từ bảng quy tắc trong `src/Auth.cpp` (`Auth::matr
 | Thông tin công khai: điểm giao, biểu phí | `GET /api/public/info` | ✓ | ✓ | ✓ | ✓ |
 | Tra cứu đơn bằng mã đơn + SĐT người nhận | `GET /api/track` | ✓ | ✓ | ✓ | ✓ |
 | **Đơn hàng** | | | | | |
+| Người nhận (không cần tài khoản) xác nhận “Đã nhận hàng” / báo chưa nhận bằng mã đơn + SĐT | `POST /api/track/confirm` | ✓ | ✓ | ✓ | ✓ |
 | Tạo đơn | `POST /api/order/add` | – | ✓ | – | ✓ |
 | Tạo đơn mẫu ngẫu nhiên | `POST /api/orders/random` | – | – | – | ✓ |
 | Sửa đơn (khi chưa phân công) | `POST /api/order/update` | – | – | – | ✓ |
@@ -580,9 +613,20 @@ Bảng sinh tự động từ bảng quy tắc trong `src/Auth.cpp` (`Auth::matr
 | Xác nhận đơn mới (Mới → Chờ giao) | `POST /api/order/confirm` | – | – | – | ✓ |
 | Từ chối đơn mới (kèm lý do) | `POST /api/order/reject` | – | – | – | ✓ |
 | Huỷ đơn (theo quy tắc và phí huỷ) | `POST /api/order/cancel` | – | ✓ | – | ✓ |
-| Xác nhận đã giao bằng mã 4 số | `POST /api/order/deliver` | – | – | ✓ | ✓ |
+| Shipper nhận đơn trên bảng đơn chờ (ai bấm trước được đơn) | `POST /api/order/claim` | – | – | ✓ | – |
+| Bảng đơn chờ nhận của shipper | `GET /api/orders/open` | – | – | ✓ | – |
+| Shipper báo “Đã giao tới” (thu đủ tiền nếu có COD), chờ người nhận xác nhận | `POST /api/order/arrive` | – | – | ✓ | ✓ |
+| Người nhận / khách xác nhận “Đã nhận hàng” để hoàn tất đơn | `POST /api/order/receive` | – | ✓ | – | ✓ |
+| Người nhận báo “Chưa nhận được hàng” (đơn quay lại Đang giao) | `POST /api/order/dispute` | – | ✓ | – | – |
+| Quản trị viên xác nhận giao thay (bắt buộc ghi lý do) | `POST /api/order/deliver` | – | – | – | ✓ |
 | Đánh giá shipper (1–5 sao) | `POST /api/order/rate` | – | ✓ | – | – |
-| Shipper đánh giá khách hàng (1–5 sao) | `POST /api/order/rate-customer` | – | – | ✓ | – |
+| Khách tip cho shipper sau khi giao (trừ vào ví) | `POST /api/order/tip` | – | ✓ | – | – |
+| Xem trò chuyện trong đơn (khách, shipper, tổng đài) | `GET /api/order/chat` | – | ✓ | ✓ | ✓ |
+| Nhắn tin trong đơn khi shipper đang giao | `POST /api/order/chat/send` | – | ✓ | ✓ | ✓ |
+| **Hồ sơ** | | | | | |
+| Shipper yêu thích / bị chặn / đã từng giao | `GET /api/customer/shippers` | – | ✓ | – | – |
+| Thêm / bỏ shipper yêu thích, chặn / bỏ chặn shipper | `POST /api/customer/shipper-pref` | – | ✓ | – | – |
+| **Đơn hàng** | | | | | |
 | Tìm lại shipper cho đơn chưa có ai nhận | `POST /api/order/retry` | – | ✓ | – | ✓ |
 | Shipper nhả đơn đã nhận khi chưa lấy hàng (kèm lý do) | `POST /api/order/release` | – | – | ✓ | – |
 | Danh sách đơn (tìm kiếm, lọc, sắp xếp, phân trang) | `GET /api/orders/list` | – | ✓ | ✓ | ✓ |
@@ -634,56 +678,19 @@ Bảng sinh tự động từ bảng quy tắc trong `src/Auth.cpp` (`Auth::matr
 | Xuất nhật ký kiểm toán CSV | `GET /api/audit/export` | – | – | – | ✓ |
 | Báo cáo theo vai trò | `GET /api/reports/summary` | – | ✓ | ✓ | ✓ |
 
-## Ghép đơn tự động kiểu Grab
+## Nhận đơn tự do và giao hàng hai bước (v15)
 
-Từ vòng 4 **không còn vai trò điều phối viên**. Khách đặt đơn xong, hệ thống tự gửi **lời mời nhận đơn** cho shipper gần kho nhất; shipper **nhận** thì mới đi giao. Cách vận hành bám theo app gọi xe / giao hàng (Grab):
+Phiên bản này thay cách ghép đơn cũ (hệ thống mời lần lượt từng shipper gần nhất, có đồng hồ đếm ngược) bằng cách **nhận đơn tự do** và đổi cách xác nhận giao hàng.
 
-```mermaid
-sequenceDiagram
-    participant K as Khách
-    participant H as Hệ thống (matchPending)
-    participant A as Shipper gần nhất
-    participant B as Shipper gần kế tiếp
-    K->>H: Đặt đơn (order/add)
-    H->>H: Dijkstra theo thời gian: shipper nào tới kho sớm nhất?
-    H->>A: Lời mời + đếm ngược 45 giây
-    alt A bấm Nhận đơn
-        A->>H: trip/accept
-        H->>K: Thẻ tài xế, mã nhận hàng, vị trí shipper chạy trên bản đồ
-    else A bấm Bỏ qua hoặc hết giờ
-        H->>B: Lời mời mới (không mời lại A)
-    end
-    Note over H,K: Hết người: khách được báo, có nút "Tìm lại shipper"; quá 10 phút thì đơn tự huỷ
-```
+**Nhận đơn tự do.** Khách đặt đơn xong, đơn vào trạng thái *Chờ giao* và hiện trên bảng **Đơn chờ nhận** của **mọi shipper đang sẵn sàng** (`GET /api/orders/open`; bảng cập nhật mỗi 5 giây và có thông báo "Có đơn mới #…"). **Shipper nào bấm *Nhận đơn* trước thì giao đơn đó** (`POST /api/order/claim`). Mọi yêu cầu chạy dưới một khoá chung nên chỉ một người thắng; người bấm sau nhận **HTTP 409** "đơn vừa được shipper khác nhận trước bạn". Điều kiện để nhận: đang sẵn sàng và không nghỉ đột xuất, không đang giữ quá hạn mức tiền mặt (với đơn thu hộ), xe chở nổi, không đang cầm đơn khác, chưa nhả đơn đó, không bị khách chặn. Đơn nào cũng thấy **thu nhập** và **thời gian chạy tới kho**; chưa nhận thì **chưa thấy SĐT / tên người nhận**. Shipper được khách yêu thích được xếp đầu bảng. Chưa ai đủ điều kiện nhận thì khách được báo và có nút *Tìm lại shipper* (hoặc đơn tự huỷ sau `match.giveUp` phút).
 
-| Tính năng của Grab | Cách làm ở đây |
-|---|---|
-| Đặt xong là tự tìm tài xế gần nhất | `matchPending()` chạy ngay khi có đơn mới, khi shipper bật *sẵn sàng*, khi shipper vừa rảnh. "Gần nhất" = **thời gian di chuyển ngắn nhất từ chỗ shipper đang đứng tới kho** (Dijkstra theo thời gian, đúng loại xe, có tính giờ cao điểm), không phải khoảng cách đường chim bay |
-| Tài xế có vài chục giây để nhận | `match.offerSeconds` (mặc định 45 giây, 1–600), thẻ *Đơn mới gần bạn* có **thanh đếm ngược**, 10 giây cuối đổi sang màu đỏ |
-| Tài xế bỏ qua hoặc hết giờ thì mời người kế | Mỗi đơn nhớ danh sách shipper đã được mời (`tried`), không mời lại; xếp theo thời gian tới kho, rồi quãng đường, rồi điểm tin cậy (bật *ưu tiên shipper điểm cao* thì điểm đứng trước) |
-| Hết tài xế thì báo khách | Đơn chuyển *Chưa có shipper*, khách bấm **Tìm lại shipper** hoặc huỷ miễn phí; không ai nhận sau `match.giveUp` phút (mặc định 10) thì hệ thống tự huỷ đơn và báo khách |
-| Tài xế bật / tắt "Sẵn sàng nhận đơn" | `POST /api/shipper/ready`; tắt khi đang giữ lời mời thì lời mời được gỡ và đơn sang người kế |
-| Vị trí tài xế | Shipper chọn điểm đang đứng (`POST /api/shipper/location`); sau khi giao xong thì vị trí là điểm giao cuối; khi đang có đơn, vị trí chạy theo hành trình |
-| Khách theo dõi tài xế trực tiếp | Bản đồ vẽ **đường shipper chạy tới kho (nét đứt)** rồi tuyến giao, xe di chuyển theo đồng hồ ca; thanh trạng thái *Đang tới kho lấy hàng* → *Đang giao* |
-| Thẻ tài xế | Tên, loại xe, biển số, điểm đánh giá, nút gọi; chỉ hiện **sau khi shipper nhận**: khách không biết ai đang được mời |
-| Huỷ chuyến có lý do và phí | Khách huỷ **miễn phí** khi chưa ai nhận; sau khi shipper nhận mà chưa lấy hàng: phí 20% cước, bắt buộc lý do; **khách không huỷ được sau khi shipper đã lấy hàng**. Shipper **nhả đơn** (`order/release`) trước khi lấy hàng, bắt buộc lý do, đơn quay lại tìm người khác |
-| Đánh giá hai chiều | Khách đánh giá shipper (`order/rate`), shipper đánh giá khách (`order/rate-customer`, lưu `customer_reviews.txt`); lời mời hiện điểm của khách |
-| Hiển thị thu nhập | Thẻ lời mời và thẻ chuyến ghi thu nhập dự kiến của shipper (70% cước vận chuyển) |
-| Quản trị thay điều phối viên | Quản trị viên thấy ai đang được mời kèm đếm ngược, **Thu hồi lời mời**, **Tìm shipper ngay**, phân công tay, đặt hạn trả lời / thời gian chờ / tốc độ giờ ca trong *Cấu hình* |
+**Giao hàng hai bước.** Shipper tới nơi bấm **Đã giao tới** (`order/arrive`; đơn thu hộ phải nhập đúng số tiền đã thu) → đơn sang trạng thái mới **Chờ xác nhận** (*ARRIVED*, mã 8). **Người nhận** bấm **Đã nhận hàng** (`order/receive`, khách chủ đơn; hoặc người nhận không cần tài khoản dùng trang *Tra cứu đơn* với mã đơn + SĐT, `track/confirm`) thì đơn mới *Đã giao*. Chưa nhận được thì bấm **Chưa nhận được hàng** (`order/dispute`, tối đa 2 lần): đơn quay lại *Đang giao* và shipper được báo để liên hệ lại. Người nhận không phản hồi sau `receive.autoMinutes` phút (mặc định 30, 0 = tắt) thì **đơn tự hoàn tất** để shipper không bị treo tiền. Quản trị viên có thể *giao thay* (`order/deliver`, bắt buộc ghi lý do). Không còn mã 4 số và không còn chức năng shipper đánh giá khách.
 
-**Cái gì không đổi.** Các thuật toán cốt lõi (Dijkstra, A\*, Bellman-Ford, Yen, TSP, cheapest insertion + 2-opt, theo hạn giao + tìm kiếm cục bộ) và 6 bộ test cũ giữ nguyên. Ghép đơn **dùng lại** chúng: tìm shipper gần nhất dùng `ShortestPath` với tiêu chí thời gian của đúng loại xe; lộ trình của chuyến vẫn do phương án *Theo hạn giao* của `Dispatcher` lập (mỗi lời mời một đơn, xuất phát từ kho, không quay về), chỉ khác là giờ xuất phát = giờ hiện tại của ca + thời gian shipper chạy tới kho.
-
-**Đồng hồ ca chạy thật.** `clock.speed` (mặc định 6) phút ca trôi qua mỗi phút thật; lời mời hết hạn và đơn tự huỷ được xử lý ngay trong mỗi request (không có luồng nền). Giao diện hỏi server mỗi 3 giây (`GET /api/me` trả `rev`, chỉ tải lại state khi `rev` đổi) và tự nội suy đồng hồ giữa hai lần hỏi nên xe chạy mượt. Đặt `clock.speed 0` để đứng yên (dùng khi demo từng bước hoặc chạy test).
-
-**Chế độ thủ công.** Tắt *Ghép đơn tự động* trong *Cấu hình* (`match.auto 0`) thì quay về luồng cũ: khách đặt đơn → *Mới*, quản trị viên *xác nhận*, rồi điều phối hoặc phân công tay. Toàn bộ luồng cũ vẫn chạy và vẫn được kiểm thử (ảnh 09–52 chụp ở chế độ này).
-
-**Cấu hình** (`data/config.txt`): `match.auto` (1/0), `match.offerSeconds` (1–600), `match.giveUp` (0–240 phút, 0 = không tự huỷ), `clock.speed` (0–120).
-
-**Dữ liệu mẫu.** Ba shipper `tuan`, `binh`, `cuong` đứng ở ba điểm khác nhau (khoá `vitri=` trong `users.txt`) nên mỗi đơn có một người "gần nhất" rõ ràng. Khách mẫu mới `cuahangmai` / `Mai@2026` thay cho tài khoản điều phối viên cũ.
+**Phần còn lại.** Hệ thống vẫn dựng chuyến cho shipper nhận đơn bằng phương án *Theo hạn giao* (xuất phát từ vị trí hiện tại của shipper tới kho rồi đi giao); tiền thu hộ ghi vào sổ COD lúc bấm *Đã giao tới*; tiền tip, trò chuyện, hạn mức tiền mặt, yêu thích / chặn shipper, tự tạm nghỉ (nay tính theo số đơn **nhả liên tiếp**) giữ nguyên. Khi tắt `match.auto` thì quản trị viên phân công tay như trước (`dispatch/assign`, shipper bấm *Nhận chuyến*). Thuật toán **A\*** đã được bỏ (và API `benchmark/p2p`); còn Dijkstra 3 phiên bản, Bellman-Ford, Yen, BFS/DFS và các thuật toán điều phối. Số điện thoại chỉ cần bắt đầu bằng **0** và dài 10–11 chữ số.
 
 ## Vòng đời đơn hàng
 
-Bảng chuyển trạng thái nằm trong `src/OrderFlow.cpp`; sơ đồ dưới đây bắt nguồn từ bảng (`Flow::transitionsMermaid()`). Mọi chuyển trạng thái không có trong bảng (hoặc vai trò không được phép) bị từ chối bằng **HTTP 409** kèm lý do. KH = khách hàng, SP = shipper, QT = quản trị viên, HT = hệ thống (ghép đơn tự động, hết hạn lời mời, tự huỷ).
+Bảng chuyển trạng thái nằm trong `src/OrderFlow.cpp`; sơ đồ dưới đây sinh từ chính bảng đó (`Flow::transitionsMermaid()`). Mọi chuyển trạng thái không có trong bảng (hoặc vai trò không được phép) bị từ chối bằng **HTTP 409** kèm lý do. KH = khách hàng, SP = shipper, QT = quản trị viên, HT = hệ thống (ghép đơn tự động, hết hạn lời mời, tự huỷ).
 
 ```mermaid
 stateDiagram-v2
@@ -719,11 +726,12 @@ stateDiagram-v2
     S4 --> [*]
 ```
 
-- **Chờ giao** (khi bật ghép tự động, khách thấy *Đang tìm shipper*): đơn vừa đặt, hệ thống đang tìm shipper. *Mới* chỉ còn ở **chế độ thủ công** (tắt ghép tự động): khách đặt, quản trị viên *xác nhận*; đơn do quản trị viên tạo vào thẳng *Chờ giao*.
-- **Đã phân công** = **lời mời đang chờ shipper trả lời** (`dispatch (HT)`): shipper **nhận** (→ *Đang giao*), **bỏ qua** kèm lý do (→ *Chờ giao*, hệ thống mời người kế, tính vào tỉ lệ từ chối) hoặc **hết giờ** (`expire`). Quản trị viên có thể *thu hồi* (`unassign`). Khi bật *chế độ mô phỏng* trong Cấu hình, đơn vào thẳng *Đang giao* và đồng hồ ca tự giao như bản gốc.
+- **Chờ giao** (khi bật nhận đơn tự do, khách thấy *Đang chờ shipper nhận*): đơn đang hiện trên bảng **Đơn chờ nhận**; shipper bấm *Nhận đơn* trước thì được đơn (`claim`, → *Đang giao*). *Mới* chỉ còn ở **chế độ thủ công** (tắt nhận đơn tự do): quản trị viên xác nhận rồi phân công tay.
+- **Đã phân công** = chuyến do **quản trị viên phân công tay** đang chờ shipper bấm *Nhận chuyến* (→ *Đang giao*) hoặc *Bỏ qua* kèm lý do (→ *Chờ giao*). Quản trị viên thu hồi được.
 - **Đang giao**: shipper đã nhận, đang chạy tới kho lấy hàng rồi đi giao. Trước khi lấy hàng shipper có thể **nhả đơn** (`release`, bắt buộc lý do, đơn về *Chờ giao* để mời người khác).
-- **Đã giao**: shipper nhập **mã 4 số** mà khách thấy trong đơn của mình (và đúng số tiền thu hộ nếu có). Quản trị viên có thể *giao thay* khi khách không đọc được mã, bắt buộc ghi lý do.
-- **Phí huỷ** tính trên phần cước vận chuyển sau giảm giá: *Chờ giao* / lời mời chưa ai nhận **miễn phí**, shipper đã nhận nhưng chưa lấy hàng **20%**, *Đang giao* sau khi lấy hàng / *Thất bại* **50%** (chỉ quản trị viên huỷ được ở hai trạng thái này; khách không huỷ được sau khi shipper đã lấy hàng). Huỷ khi đã có shipper bắt buộc ghi lý do. Huỷ trước khi shipper nhận thì trả lại lượt dùng mã giảm giá.
+- **Chờ xác nhận** (mới): shipper đã bấm *Đã giao tới*; **người nhận** bấm *Đã nhận hàng* → *Đã giao*, hoặc *Chưa nhận được* → quay lại *Đang giao*. Quá `receive.autoMinutes` phút không phản hồi thì tự hoàn tất.
+- **Đã giao**: người nhận đã xác nhận (hoặc hệ thống tự hoàn tất / quản trị viên giao thay kèm lý do). Tiền thu hộ đã ghi vào sổ COD từ lúc *Đã giao tới*.
+- **Phí huỷ** tính trên phần cước vận chuyển sau giảm giá: *Chờ giao* chưa ai nhận **miễn phí**, shipper đã nhận nhưng chưa lấy hàng **20%**, *Đang giao* sau khi lấy hàng / *Thất bại* **50%** (chỉ quản trị viên huỷ được ở hai trạng thái này; khách không huỷ được sau khi shipper đã lấy hàng). Huỷ khi đã có shipper bắt buộc ghi lý do. Huỷ trước khi shipper nhận thì trả lại lượt dùng mã giảm giá.
 - **Báo giá = hoá đơn**: `cước gốc` (biểu phí, quãng đường Dijkstra từ kho) − `giảm theo hạng` − `mã giảm giá` (mỗi khoản làm tròn xuống 500 đ) + `phí thu hộ`. Ba con số được lưu vào đơn lúc đặt (`gia=`, `tv=`, `ck=`), nên đổi biểu phí sau đó không làm sai hoá đơn cũ.
 - **Tổng phải trả** = cước sau giảm giá + **phí bảo hiểm** (`bh=`, khi khai giá trên mức miễn phí). Người gửi trả thì trừ vào ví đối soát khi đơn giao xong; **người nhận trả** (`tra=1`) thì shipper thu *thu hộ + tổng cước* lúc giao, số này vào sổ COD như tiền thu hộ.
 - **Thất bại → Giao lại / Hoàn kho**: khách tự chọn được (trang *Đơn của tôi*), nhân viên cũng làm được. Hoàn kho (khách chọn, nhân viên chọn, hay hệ thống tự hoàn sau lần thất bại thứ 2 hoặc lý do *từ chối nhận* / *hàng hư hỏng*) đều ghi **phí hoàn** = 50% cước vận chuyển (không gồm phí thu hộ) vào đơn (`hoan=`); đơn hoàn chỉ chịu phí hoàn, không chịu cước và bảo hiểm.
@@ -861,7 +869,9 @@ ctv_hung shipper b2d82fc617a11629 055d4c30…a055 - status=pending email=hung@ex
 | `audit.txt` | `id thoi_diem(giay) nguoi_lam vai_tro hanh_dong doi_tuong chi_tiet` |
 | `complaints.txt` | `C id khach ma_don trang_thai tao cap_nhat nguoi_xu_ly tieu_de` (phiếu) và `M id thoi_diem tac_gia vai_tro noi_dung` (tin nhắn trong phiếu) |
 | `cod_ledger.txt` | `E id ma_don shipper so_tien trang_thai(held\|remitted\|settled) thu_luc phieu_nop chot_ca` (bút toán), `R id shipper luc_nop du_kien khai_nop trang_thai thanh_toan_luc dem_duoc nguoi_xac_nhan danh_sach_but_toan ghi_chu` (phiếu nộp), `K id shipper luc_chot so_don da_thu dem_duoc nguoi_chot` (chốt ca) |
-| `customer_ledger.txt` | `T id loai(payout\|collect\|comp) khach so_tien luc(giay) nguoi_ghi ma_don ma_khieu_nai kenh(bank\|cash\|wallet) tham_chieu ghi_chu`: giao dịch tay của ví đối soát (chi trả, khách nộp bù, bồi thường). Các dòng thu hộ / cước / phí trong sao kê **không** lưu ở đây mà tính lại từ đơn và sổ COD mỗi lần xem, nên không thể lệch nhau |
+| `customer_ledger.txt` | `T id loai(payout\|collect\|comp\|tip) khach so_tien luc(giay) nguoi_ghi ma_don ma_khieu_nai kenh(bank\|cash\|wallet) tham_chieu ghi_chu`: giao dịch tay của ví đối soát (chi trả, khách nộp bù, bồi thường). Các dòng thu hộ / cước / phí trong sao kê **không** lưu ở đây mà tính lại từ đơn và sổ COD mỗi lần xem, nên không thể lệch nhau |
+| `order_chat.txt` | `M id ma_don luc(giay) nguoi_gui vai_tro(C\|S\|A) noi_dung`: tin nhắn trong đơn (tối đa 200 tin mỗi đơn) |
+| `customer_prefs.txt` | `F khach shipper` (yêu thích) hoặc `B khach shipper` (đã chặn) |
 | `orders_live.txt` | Cùng định dạng `orders.txt`, có thêm các khoá vận hành ở trên |
 
 ## Kịch bản demo khi bảo vệ
@@ -975,7 +985,7 @@ Mọi API trả JSON. Tham số POST gửi dạng form (`application/x-www-form-
 | POST | `/api/users/status` | `username`, `status`, `reason` | Duyệt / từ chối / khoá / mở khoá tài khoản |
 | GET | `/api/public/info` |  | Thông tin công khai: điểm giao, biểu phí |
 | GET | `/api/quote` | `destination`, `weight`, `urgent`, `cod`, `promo`, `value` (giá trị khai báo, đ), `length`, `width`, `height` (cm), `payer` (sender / receiver) | Báo giá cước (Dijkstra) — khách vãng lai dùng thử được; trả thêm `insurance`, `total`, `chargedWeight`, `volWeight`, `collect` |
-| GET | `/api/track` | `code`, `phone` | Tra cứu đơn bằng mã đơn + SĐT người nhận |
+| GET | `/api/track` | `code`, `phone` | Tra cứu đơn bằng mã đơn + SĐT người nhận; trả thêm `canConfirm` / `canDispute` / `autoConfirmAt` khi shipper đã báo giao tới (không còn mã nhận hàng) và đang giao |
 | POST | `/api/order/add` | `id`, `address`, `owner`, `promo`, `destination`, `weight`, `urgent`, `deadline`, `note`, `cod`, `phone`, `recipient`, `value` (giá trị khai báo, đ), `length`, `width`, `height` (cm), `payer` (sender / receiver) | Tạo đơn. Khách đang nợ phí quá hạn mức → **409** |
 | POST | `/api/order/update` | `id`, `owner`, `destination`, `weight`, `urgent`, `deadline`, `note`, `cod`, `phone`, `recipient`, `value` (giá trị khai báo, đ), `length`, `width`, `height` (cm), `payer` (sender / receiver) | Sửa đơn (khi chưa phân công) |
 | POST | `/api/order/edit` | như `order/update` (trừ `owner`) | Khách tự sửa đơn của mình khi còn *Mới*; cước, bảo hiểm tính lại |
@@ -984,9 +994,19 @@ Mọi API trả JSON. Tham số POST gửi dạng form (`application/x-www-form-
 | POST | `/api/order/confirm` | `id` | Xác nhận đơn mới (Mới → Chờ giao) |
 | POST | `/api/order/reject` | `id`, `reason` | Từ chối đơn mới (kèm lý do) |
 | POST | `/api/order/cancel` | `id`, `reason` | Huỷ đơn (theo quy tắc và phí huỷ) |
-| POST | `/api/order/deliver` | `id`, `note`, `force`, `code`, `cash` | Xác nhận đã giao bằng mã 4 số |
+| POST | `/api/order/claim` | `id` | Shipper nhận đơn trên bảng đơn chờ (ai bấm trước được đơn; người sau nhận 409) |
+| GET | `/api/orders/open` | | Bảng đơn chờ nhận của shipper (thu nhập, thời gian tới kho, `canClaim`) |
+| POST | `/api/order/arrive` | `id`, `cash`, `note` | Shipper báo *Đã giao tới* (đơn thu hộ nhập đúng số tiền đã thu) |
+| POST | `/api/order/receive` | `id` | Khách / người nhận xác nhận *Đã nhận hàng* (đơn hoàn tất) |
+| POST | `/api/order/dispute` | `id`, `reason` | Báo *Chưa nhận được hàng* (tối đa 2 lần; đơn quay lại *Đang giao*) |
+| POST | `/api/track/confirm` | `code`, `phone`, `action` (`receive`\|`dispute`) | Người nhận không cần tài khoản xác nhận / báo chưa nhận (giới hạn 12 lần / 10 phút mỗi IP) |
+| POST | `/api/order/deliver` | `id`, `note` (bắt buộc), `cash` | Quản trị viên giao thay khi người nhận không phản hồi |
 | POST | `/api/order/rate` | `id`, `stars`, `comment` | Đánh giá shipper (1–5 sao) |
-| POST | `/api/order/rate-customer` | `id`, `stars`, `comment` | Shipper đánh giá khách sau khi giao (1–5 sao, mỗi đơn một lần) |
+| POST | `/api/order/tip` | `id`, `amount`, `note` | Khách tip shipper sau khi giao (trừ ví, một lần, trong 7 ngày) |
+| GET | `/api/order/chat?id=` | | Tin nhắn của đơn, câu trả lời nhanh, trạng thái mở / chỉ xem |
+| POST | `/api/order/chat/send` | `id`, `text` | Gửi tin nhắn (1–300 ký tự, 20 tin / 60 giây) |
+| GET | `/api/customer/shippers` | | Shipper yêu thích, đã chặn và đã từng giao cho khách |
+| POST | `/api/customer/shipper-pref` | `shipper`, `action` (`fav`\|`unfav`\|`block`\|`unblock`) | Đổi danh sách yêu thích / chặn |
 | POST | `/api/order/retry` | `id` | Tìm lại shipper cho đơn *Chờ giao* chưa có ai nhận (xoá danh sách đã mời); khách và quản trị viên |
 | POST | `/api/order/release` | `id`, `reason` | Shipper nhả đơn đã nhận khi chưa lấy hàng, đơn về *Chờ giao* để mời người khác |
 | GET | `/api/orders/list` | `status`, `owner`, `urgent`, `from`, `to`, `q`, `sort`, `dir`, `size`, `page` | Danh sách đơn (tìm kiếm, lọc, sắp xếp, phân trang) |
@@ -1040,7 +1060,6 @@ Mọi API trả JSON. Tham số POST gửi dạng form (`application/x-www-form-
 | GET | `/api/zones` | `depots` = 0,7 | Chia vùng nhiều kho |
 | GET | `/api/path` | `src`, `dst`, `algo` = heap / stl / array / bellman / bfs, `criterion` = distance / time / cost, `vehicle` = 0..3, `depart` (phút trong ngày, tuỳ chọn) | Đường đi và bảng so sánh 5 thuật toán; có `depart` thì tính giờ cao điểm |
 | GET | `/api/trace` | `algo` = dijkstra / astar / bfs / dfs / bellman, `src`, `dst`, `criterion`, `vehicle` | Các bước chạy (tối đa 4.000) cho trang Mô phỏng |
-| GET | `/api/benchmark/p2p` | `pairs`, `criterion` | Dijkstra (dừng sớm) so với A* trên bản đồ hiện tại |
 | GET | `/api/timeprofile` | `src`, `dst`, `vehicle`, `step` (phút) | Thời gian đi nhanh nhất theo giờ xuất phát trong ngày |
 | GET | `/api/bellman` | `src`, `criterion`, `vehicle` | Bellman-Ford, chu trình âm, so sánh với Dijkstra |
 | GET | `/api/estimate` | `depot`, `stops` = 1,7,8, `vehicle`, `return`, `depart` | Dự toán tuyến nhiều điểm |
@@ -1087,18 +1106,96 @@ make test               # 8 bộ test C++ (hoặc: cd build && ctest)
 make diff-standalone    # so khớp bản một file với server C++ (cần Node.js)
 ```
 
-Kết quả hiện tại: **cả 8 bộ đều đạt** (41 + 382 + 1.664 + 3.693 + 108 + 206 + 1.079 + 974 kiểm tra). Sáu bộ cũ giữ nguyên, chỉ sửa **một dòng** trong `test_auth.cpp`: số tài khoản mẫu trong `data/users.txt` từ 6 thành 9 (thêm khách chủ cửa hàng, shipper chờ duyệt, khách thân thiết; 6 tài khoản cũ giữ nguyên mật khẩu). `test_auth` có 206 kiểm tra thay vì 200 vì vòng lặp ghi rồi đọc lại `users.txt` kiểm tra 2 điều cho mỗi tài khoản (3 tài khoản mới → thêm 6 kiểm tra).
+Kết quả hiện tại: **cả 8 bộ đều đạt** (41 + 382 + 562 + 3.693 + 109 + 206 + 1.346 + 1.057 kiểm tra; v15 bớt khoảng 1.100 kiểm tra A\* của `test_features` vì đã xoá thuật toán, và viết lại các kiểm tra luồng giao hàng trong `test_web` / `test_commerce`). Sáu bộ cũ giữ nguyên, chỉ sửa **một dòng** trong `test_auth.cpp`: số tài khoản mẫu trong `data/users.txt` từ 6 thành 9 (thêm khách chủ cửa hàng, shipper chờ duyệt, khách thân thiết; 6 tài khoản cũ giữ nguyên mật khẩu). `test_auth` có 206 kiểm tra thay vì 200 vì vòng lặp ghi rồi đọc lại `users.txt` kiểm tra 2 điều cho mỗi tài khoản (3 tài khoản mới → thêm 6 kiểm tra).
 
 - `tests/test_traversal_fileio.cpp` (41 kiểm tra): BFS/DFS, đường ít chặng, liên thông, Kosaraju, vùng giao, đọc/ghi lại file (round-trip), bắt 9 loại lỗi file, CRLF + BOM.
-- `tests/test_features.cpp` (1.664 kiểm tra): kẹt xe làm tăng thời gian, đóng đường thì tuyến đi vòng, hai ngăn xếp hoàn tác (giới hạn bước, thao tác mới xoá ngăn làm lại), chuẩn hoá tiếng Việt không dấu, Trie và tìm theo nhiều từ, Yen trên ví dụ kinh điển (5, 7, 8) và trên bản đồ thật, mốc thời gian dọc lộ trình, áp dụng / giao / thất bại / đưa về hàng chờ / điều phối lại giữa ca / đặt lại ca; giờ cao điểm: mức đông theo giờ, Dijkstra theo giờ trùng Dijkstra thường lúc vắng, đổi tuyến lúc 7:30, 3 bản Dijkstra và Bellman-Ford cùng kết quả theo giờ, tính FIFO, Yen theo giờ, dự toán và điều phối chậm hơn khi ca bắt đầu 7:00; A\* cho cùng khoảng cách với Dijkstra trên 2 bản đồ × 3 tiêu chí × 4 loại xe và xét ít đỉnh hơn; mô phỏng từng bước cho kết quả trùng thuật toán gốc, mỗi lần lấy ra đúng khoá nhỏ nhất của heap, BFS/DFS cùng thứ tự với `Traversal`, phát hiện chu trình âm; phương án theo hạn giao không kém phương án nào (số đơn giao, số trễ, km) và mỗi đơn xuất hiện đúng một lần.
+- `tests/test_features.cpp` (562 kiểm tra): kẹt xe làm tăng thời gian, đóng đường thì tuyến đi vòng, hai ngăn xếp hoàn tác (giới hạn bước, thao tác mới xoá ngăn làm lại), chuẩn hoá tiếng Việt không dấu, Trie và tìm theo nhiều từ, Yen trên ví dụ kinh điển (5, 7, 8) và trên bản đồ thật, mốc thời gian dọc lộ trình, áp dụng / giao / thất bại / đưa về hàng chờ / điều phối lại giữa ca / đặt lại ca; giờ cao điểm: mức đông theo giờ, Dijkstra theo giờ trùng Dijkstra thường lúc vắng, đổi tuyến lúc 7:30, 3 bản Dijkstra và Bellman-Ford cùng kết quả theo giờ, tính FIFO, Yen theo giờ, dự toán và điều phối chậm hơn khi ca bắt đầu 7:00; A\* cho cùng khoảng cách với Dijkstra trên 2 bản đồ × 3 tiêu chí × 4 loại xe và xét ít đỉnh hơn; mô phỏng từng bước cho kết quả trùng thuật toán gốc, mỗi lần lấy ra đúng khoá nhỏ nhất của heap, BFS/DFS cùng thứ tự với `Traversal`, phát hiện chu trình âm; phương án theo hạn giao không kém phương án nào (số đơn giao, số trễ, km) và mỗi đơn xuất hiện đúng một lần.
 - `tests/test_extensions.cpp` (3.693 kiểm tra): Tarjan so với cách vét cạn "bỏ thử từng cạnh / từng điểm rồi đếm thành phần" trên ví dụ tự dựng, 2 bản đồ thật và 6 đồ thị ngẫu nhiên, đồ thị 2.000 điểm không tràn stack; Kruskal = Prim trên 3 bản đồ và 20 đồ thị ngẫu nhiên, số cạnh = V − số cây, không tạo chu trình; Floyd–Warshall trùng Dijkstra ở mọi cặp điểm × 3 loại xe; vị trí kho gợi ý không tệ hơn kho hiện tại, tổng km khớp Dijkstra; huỷ đơn, thất bại 2 lần thì hoàn kho, shipper nghỉ (đơn về hàng chờ, chuyến dừng ở đỉnh kế tiếp), đóng đường giữa ca thì lộ trình mới không đi qua đoạn đóng và giờ tới khớp từng điểm, kẹt xe chỉ làm muộn giờ tới, điểm bị cô lập thì đơn trả về hàng chờ.
 - `tests/test_auth.cpp` (200 kiểm tra): SHA-256 đúng các vector chuẩn FIPS (chuỗi rỗng, "abc", 448 bit, một triệu ký tự 'a') và các độ dài sát biên khối; băm mật khẩu đúng định nghĩa, khác muối thì khác băm; đọc `users.txt` mẫu và đăng nhập đúng / sai, ghi rồi đọc lại, bắt lỗi file (vai trò, băm, trùng tên, BOM / CRLF); thêm / sửa / xoá tài khoản, kiểm tra tên đăng nhập và độ mạnh mật khẩu, không xoá / hạ quyền quản trị viên cuối cùng, đổi mật khẩu thì đổi muối, đổi tên shipper thì liên kết đi theo; phiên hết hạn khi không dùng và được gia hạn khi dùng, đăng xuất mọi phiên của một tài khoản; khoá sau 5 lần sai và hết khoá thì đếm lại; bảng phân quyền 3 vai trò trên 21 API chỉ dành cho quản trị viên; trường `kh=` trong `orders.txt`.
-- `tests/test_business.cpp` (108 kiểm tra): đọc / ghi lại trường `cod=`, `sdt=`, `nhan=` (kể cả ghi chú trùng dạng khoá, file định dạng cũ), bắt lỗi COD âm / quá 50 triệu / số điện thoại sai; biểu phí từng khoản và làm tròn 500 đ, quãng đường tính phí bỏ qua sự cố tạm thời; lý do thất bại (từ chối / hư hỏng hoàn kho ngay, hoàn kho không đưa lại hàng chờ); shipper đang chạy chuyến trước thì chuyến mới xuất phát lúc về kho, không chuyến nào của cùng một người chồng giờ; doanh thu – chi phí – lợi nhuận và đối soát COD khớp cộng tay; nhật ký ca; đổi tuyến khi shipper đang giao đơn thứ hai ở cùng một điểm.
+- `tests/test_business.cpp` (109 kiểm tra): đọc / ghi lại trường `cod=`, `sdt=`, `nhan=` (kể cả ghi chú trùng dạng khoá, file định dạng cũ), bắt lỗi COD âm / quá 50 triệu / số điện thoại sai; biểu phí từng khoản và làm tròn 500 đ, quãng đường tính phí bỏ qua sự cố tạm thời; lý do thất bại (từ chối / hư hỏng hoàn kho ngay, hoàn kho không đưa lại hàng chờ); shipper đang chạy chuyến trước thì chuyến mới xuất phát lúc về kho, không chuyến nào của cùng một người chồng giờ; doanh thu – chi phí – lợi nhuận và đối soát COD khớp cộng tay; nhật ký ca; đổi tuyến khi shipper đang giao đơn thứ hai ở cùng một điểm.
 - `tests/test_algorithms.cpp` (382 kiểm tra): Min-Heap so với sắp xếp, 3 bản Dijkstra cho cùng kết quả theo cả 3 tiêu chí, đường cấm xe tải, Bellman-Ford trùng Dijkstra khi trọng số không âm, ca Dijkstra sai do cạnh âm, phát hiện chu trình âm, công thức dự toán, TSP ≤ 2-opt ≤ NN, không shipper nào vượt tải, lộ trình là đường đi liên tục trên bản đồ.
 - `tests/test_commerce.cpp` (1.079 kiểm tra, mới): chính sách mật khẩu, khoá luỹ tiến, giới hạn tần suất, mã OTP (hết hạn, dùng một lần, giới hạn số lần thử), vòng đời tài khoản, bảng quyền 4 vai trò, **máy trạng thái đơn với mọi cặp trạng thái × hành động × vai trò**, phí huỷ, báo giá / mã giảm giá / hạng thân thiết, sổ COD, khiếu nại, thông báo, nhật ký kiểm toán (CSV chống chèn công thức), tìm kiếm không dấu (`TextIndex`), đọc / ghi lại `orders.txt` với các cột mới (file cũ vẫn đọc được); **bản 3**: cân quy đổi, phí bảo hiểm và mức miễn phí, kiểm tra kích thước, trần bồi thường, sổ giao dịch khách (đọc / ghi lại, bắt lỗi), sao kê (thu hộ chờ đối soát không rút được, người nhận trả thì không trừ cước, phí huỷ / hoàn, chi trả / nộp bù / bồi thường), round-trip các khoá `gtri=`, `bh=`, `kt=`, `tra=`, `hoan=`, `xong=`; **vòng 4**: file cũ còn vai trò `dispatcher` thì tài khoản bị khoá kèm lý do, khoá `vitri=` (vị trí shipper), cấu hình ghép đơn (lưu / đọc lại, miền giá trị), điểm trung bình khách do shipper chấm, `ShiftManager` (lời mời im lặng, nhận muộn thì lùi giờ, nhả đơn trước khi lấy hàng, vị trí chờ, dọn chuyến rỗng).
-- `tests/test_web.cpp` (974 kiểm tra, mới): khởi động server thật trên bản sao `data/` và gọi HTTP như trình duyệt: đăng ký (hợp lệ, trùng, sai định dạng, spam, honeypot), duyệt shipper, đăng nhập 3 kiểu, khoá luỹ tiến, quên / đặt lại mật khẩu, **ma trận quyền 4 chủ thể × mọi API (570 ô)**, IDOR, máy trạng thái (409), mã giao hàng, COD, mã giảm giá, phí huỷ, khiếu nại, thông báo, kiểm toán, CSRF / Origin, tiêu đề bảo mật, mỗi loại dữ liệu ghi ra file riêng; **bản 3**: báo giá có bảo hiểm / cân quy đổi, khách sửa đơn (chỉ khi *Mới*, không sửa đơn người khác), hạn giao đã qua bị từ chối, người nhận trả thì shipper phải thu đúng *thu hộ + cước*, khách hẹn giao lại / hoàn hàng, phí hoàn, phân công tay (shipper nghỉ, đơn sai trạng thái), thu hồi chuyến (đã nhận thì 409), bồi thường (trần, một lần, sai loại), ví (khách chỉ xem của mình, chỉ quản trị viên chi trả, không chi quá số rút được), cảnh báo, doanh thu theo ngày, `customer_ledger.txt` được ghi; **vòng 4**: ghép đơn tự động (mời đúng shipper gần kho nhất, shipper khác không thấy lời mời, khách không biết ai được mời, bỏ qua → người kế, tắt sẵn sàng → gỡ lời mời, nhận chỉ đúng người, nhận lần hai 409, không đổi vị trí khi đang bận, huỷ có lý do và phí, huỷ lời mời miễn phí, nhả đơn, hết người → báo khách, tìm lại, hết hạn → người kế, đánh giá hai chiều, đơn từ file không tự ghép, tắt ghép tự động quay về luồng thủ công); **vòng 5**: khách đặt hàng nặng hơn xe lớn nhất hoặc giao về chính kho bị từ chối ngay.
+- `tests/test_web.cpp` (1.057 kiểm tra): khởi động server thật trên bản sao `data/` và gọi HTTP như trình duyệt: đăng ký (hợp lệ, trùng, sai định dạng, spam, honeypot), duyệt shipper, đăng nhập 3 kiểu, khoá luỹ tiến, quên / đặt lại mật khẩu, **ma trận quyền 4 chủ thể × mọi API (570 ô)**, IDOR, máy trạng thái (409), mã giao hàng, COD, mã giảm giá, phí huỷ, khiếu nại, thông báo, kiểm toán, CSRF / Origin, tiêu đề bảo mật, mỗi loại dữ liệu ghi ra file riêng; **bản 3**: báo giá có bảo hiểm / cân quy đổi, khách sửa đơn (chỉ khi *Mới*, không sửa đơn người khác), hạn giao đã qua bị từ chối, người nhận trả thì shipper phải thu đúng *thu hộ + cước*, khách hẹn giao lại / hoàn hàng, phí hoàn, phân công tay (shipper nghỉ, đơn sai trạng thái), thu hồi chuyến (đã nhận thì 409), bồi thường (trần, một lần, sai loại), ví (khách chỉ xem của mình, chỉ quản trị viên chi trả, không chi quá số rút được), cảnh báo, doanh thu theo ngày, `customer_ledger.txt` được ghi; **vòng 4**: ghép đơn tự động (mời đúng shipper gần kho nhất, shipper khác không thấy lời mời, khách không biết ai được mời, bỏ qua → người kế, tắt sẵn sàng → gỡ lời mời, nhận chỉ đúng người, nhận lần hai 409, không đổi vị trí khi đang bận, huỷ có lý do và phí, huỷ lời mời miễn phí, nhả đơn, hết người → báo khách, tìm lại, hết hạn → người kế, đánh giá hai chiều, đơn từ file không tự ghép, tắt ghép tự động quay về luồng thủ công); **vòng 5**: khách đặt hàng nặng hơn xe lớn nhất hoặc giao về chính kho bị từ chối ngay.
 - `tools/diff_standalone.mjs`: chạy cùng một kịch bản 468 bước (khách vãng lai, quản trị viên, khách hàng, shipper; ghép đơn tự động: mời shipper gần nhất, bỏ qua, hết hạn, nhả đơn, hết người, tìm lại, đánh giá hai chiều; COD, khiếu nại, hoàn tác, nhập file, chia đơn, đổi bộ dữ liệu, các mã 200 / 400 / 401 / 403 / 409) trên server C++ và trên engine JavaScript của bản một file, so từng trường JSON và các file dữ liệu ghi ra. Bản 3 thêm 99 bước cho nghiệp vụ mở rộng (khai giá, người nhận trả, sửa đơn, giao lại / hoàn hàng của khách, phân công tay, thu hồi chuyến, bồi thường, ví, chi trả, cảnh báo) và so cả `customer_ledger.txt`. Kết quả: **288 / 288 bước khớp, 0 file khác**. Chỉ bỏ qua giá trị ngẫu nhiên / theo giờ (thời điểm, mã phiên, CSRF, mã giao 4 số, muối) và 2 câu chữ cố ý khác (mô tả nút *Lưu*, tên "Dijkstra std::priority_queue").
 - **Giao diện** (Playwright, Chromium): đi qua mọi trang của 3 vai trò trên cả server C++ và bản một file, không có lỗi JavaScript nào; kịch bản end-to-end chụp 35 ảnh trong `docs/screenshots/` (server C++), kịch bản nghiệp vụ mở rộng 33 bước qua 3 vai trò (ảnh 36–52, chế độ thủ công) và kịch bản Grab 30 bước với hai khách và ba shipper chạy cùng lúc (ảnh 53–67) và 10 ảnh trong `docs/screenshots/standalone/` (bản một file: đặt đơn → điều phối → nhận chuyến → giao sai mã / đúng mã → tải lại trang vẫn còn dữ liệu → quên mật khẩu → khoá đăng nhập).
+
+## Tích hợp Google Maps
+
+**Google Maps là bản đồ chính** của giao diện: nền bản đồ thật, lộ trình vẽ theo **đường thật trên phố**, và trang *Tìm đường* hỏi **Google tìm đường ngắn nhất / nhanh nhất** rồi đặt cạnh kết quả thuật toán của đồ án. Để dùng được bạn **phải có khoá API Google** (Maps JavaScript API + Routes API, hướng dẫn bên dưới). **Chưa có khoá, mất mạng, hết hạn mức hay chưa bật API thì hệ thống tự quay về sơ đồ và thuật toán Dijkstra của đồ án**, mọi tính năng và bài tập cấu trúc dữ liệu vẫn chạy như cũ.
+
+| Bảng chọn nền (máy tính) | Trên điện thoại |
+|---|---|
+| ![](docs/screenshots/87-google-maps-bang-chon-nen.png) | ![](docs/screenshots/88-google-maps-dien-thoai.png) |
+
+**Cái gì chạy trên Google, cái gì vẫn là của đồ án**
+
+| Phần | Khi có khoá Google | Không có khoá / Google lỗi |
+|---|---|---|
+| Nền bản đồ (mọi trang, mọi vai trò) | Google Maps, có kiểu tối | Sơ đồ SVG |
+| Đường đi của chuyến: Điều phối, Theo dõi, Chuyến của tôi (shipper), Đơn của tôi (khách) | Vẽ theo **đường thật** qua đúng các điểm giao theo thứ tự (Routes API) | Đường thẳng theo đồ thị |
+| Trang **Tìm đường** | Thẻ *Google Maps*: tuyến **ngắn nhất** (hoặc nhanh nhất) do Google chọn trên phố thật, tối đa vài tuyến thay thế để bấm chọn, chênh lệch km so với Dijkstra; đường đồ án vẽ đứt nét để đối chiếu | Chỉ kết quả thuật toán |
+| Mỗi chuyến ở trang Theo dõi | Dòng *Google: km · phút* đi đúng lộ trình trên đường thật | Không hiện |
+| Thuật toán, phân chuyến, cước, ETA, mọi số liệu của máy chủ, 8 bộ kiểm thử | **Không đổi**: vẫn do Dijkstra / Bellman-Ford / phân chuyến của đồ án tính | Như cũ |
+
+Nói cách khác: *đường vẽ và ETA tham khảo* lấy từ Google, còn *thuật toán chấm điểm, phân công và tính tiền* vẫn là của đồ án để bản C++, bản HTML một file và bài tập khớp nhau. Các trang thuật toán (Khám phá, Phòng thí nghiệm, Chi phí, Phân tích…) vẫn vẽ đồ thị đồ án lên nền Google; nút đồ thị trong thanh lớp bản đồ cho ẩn / hiện các đoạn đường của đồ án.
+
+**Bật Google Maps.**
+
+1. Bấm nút quả cầu ở cột nút bên phải bản đồ (có cả trên điện thoại). Khi chưa có khoá nút có chấm vàng.
+2. Dán khoá API, bấm **Lưu và dùng Google Maps**. Khoá chỉ lưu trong `localStorage` của trình duyệt này; **Xoá khoá** gỡ nó đi. Có khoá rồi thì lần sau mở trang tự dùng Google (mặc định); chọn **Sơ đồ (dự phòng)** để quay về bản đồ cũ.
+3. Hộp *Tính giao thông thực tế* (mặc định tắt) làm ô tô được ước tính theo giao thông hiện tại; Google tính phí loại này cao hơn.
+
+**Tạo khoá API (khoảng 5 phút).**
+
+1. Vào [Google Cloud Console](https://console.cloud.google.com/), tạo dự án và bật **thanh toán** (Google yêu cầu tài khoản thanh toán, có hạn mức miễn phí hằng tháng; xem bảng giá hiện hành của Google vì giá thay đổi).
+2. **APIs & Services → Library** → bật **hai** API: **Maps JavaScript API** (bản đồ nền) và **Routes API** (đường đi thật; dùng qua thư viện `routes` của Maps JavaScript API).
+3. **Credentials → Create credentials → API key**.
+4. **Giới hạn khoá** (bắt buộc nếu đưa lên mạng, vì khoá nằm trong trình duyệt nên ai mở trang cũng thấy): *Application restrictions* = **Websites (HTTP referrers)** với đúng địa chỉ bạn dùng, ví dụ `http://localhost:8080/*` khi chạy `make run` hoặc `https://ten-mien-cua-ban.com/*` khi triển khai; *API restrictions* = **Restrict key** → chọn **Maps JavaScript API** và **Routes API**. Đặt **ngân sách và cảnh báo chi phí** trong Billing.
+5. Dán khoá vào bảng "Nền bản đồ".
+
+**Chi phí và giới hạn.** Mỗi lộ trình lạ tốn một lượt gọi Routes API (kết quả được nhớ trong phiên nên vẽ lại không tốn thêm; lộ trình dài hơn 27 điểm được chia nhiều lượt). Có **trần cứng 400 lượt mỗi lần mở trang** để một lỗi vòng lặp không đốt tiền; chạm trần thì các tuyến sau vẽ theo đồ thị và có thông báo. Xe máy dùng chế độ *two-wheeler* của Google, nơi chưa hỗ trợ thì tự đổi sang ô tô; xe tải dùng chế độ ô tô (Google không biết các đoạn cấm tải riêng của đồ án). Đường Google chọn **có thể khác** đường của đồ án vì đồ thị đồ án có phí, giờ cao điểm và cấm tải riêng.
+
+**Lưu ý khi chạy.**
+
+- Chạy qua máy chủ (`make run`, `http://localhost:…`) là chắc chắn nhất. Bản **một file HTML** mở bằng `file://` không có địa chỉ web nên khoá giới hạn domain sẽ bị Google từ chối; hãy mở nó qua một máy chủ web tĩnh hoặc dùng khoá thử không giới hạn trên máy cá nhân rồi xoá.
+- Máy chủ C++ chỉ mở `Content-Security-Policy` cho đúng các miền của Google (`maps.googleapis.com`, `*.gstatic.com`, `*.google.com`…) và gửi `Referer` dạng `strict-origin-when-cross-origin` (chỉ tên miền) để Google kiểm tra giới hạn domain.
+- Đổi sang khoá khác trong cùng phiên sẽ tải lại trang (Google không cho đổi khoá khi đã nạp).
+- **Chưa kiểm thử với Google thật** trong môi trường phát triển (không có khoá): luồng được kiểm tra bằng thư viện Google giả lập ở trình duyệt (nền, định vị, Routes API, lỗi quyền, trần lượt, dự phòng). Lần đầu có khoá, nếu thấy đường vẽ lệch hoặc lỗi, mở bảng quả cầu để xem thông báo nguyên nhân.
+
+**Liên kết "Mở trong Google Maps" (không cần khoá).** Trang **Chuyến của tôi**: mỗi điểm đang giao có nút **Dẫn đường** (hoặc **Chỉ đường tới kho** khi chưa lấy hàng), và **Dẫn đường cả chuyến** khi còn từ 2 điểm; xuất phát từ vị trí hiện tại của điện thoại. Trang **Theo dõi**: mỗi chuyến có nút **Google Maps** mở kho rồi các điểm theo thứ tự (tối đa 9 điểm trung gian).
+
+## Thiết kế lại (v14)
+
+Một dải màu thương hiệu duy nhất **xanh ngọc → xanh mòng két → xanh biển** dùng cho mọi điểm nhấn (logo, nút chính, mục đang chọn ở thanh dưới, gạch dưới tiêu đề trang, ô số liệu đầu tiên, tiến trình đơn); mọi bề mặt còn lại trung tính. Thẻ trắng không viền với đổ bóng mềm nhiều lớp, ô số liệu có chấm màu theo ý nghĩa (xanh lá / vàng / xanh dương / tím), **thẻ hạng thành viên kiểu thẻ ngân hàng**, thẻ đơn có **sọc màu theo trạng thái** ở mép trái, tiêu đề trang chào có chữ dải màu, sơ đồ có lưới chấm rất nhạt. Chữ số dùng độ rộng đều (`tnum`) nên tiền và giờ không nhảy khi cập nhật. Vẫn là CSS thuần (một lớp `v14` ở cuối `style.css`), không đổi HTML ngoài một thẻ `<span>` ở tiêu đề, không đổi API.
+
+| Trang đăng nhập | Đơn của tôi (khách) |
+|---|---|
+| ![](docs/screenshots/102-thiet-ke-v14-dang-nhap.png) | ![](docs/screenshots/103-thiet-ke-v14-don-cua-toi.png) |
+| **Tổng quan (quản trị)** | **Chế độ tối** |
+| ![](docs/screenshots/104-thiet-ke-v14-tong-quan.png) | ![](docs/screenshots/105-thiet-ke-v14-che-do-toi.png) |
+
+## Hoàn thiện giao diện và bản đồ (v13)
+
+- **Trang đăng nhập không còn nút "Tài khoản dùng thử"**: mọi người tự gõ tên đăng nhập / email / SĐT và mật khẩu; hệ thống tự đưa vào trang đúng vai trò (khách hàng, shipper, quản trị). Thay vào chỗ đó là thẻ giới thiệu ba vai trò (không bấm được, không lộ mật khẩu) và **cảnh báo Caps Lock** khi gõ mật khẩu. Tài khoản mẫu vẫn có trong dữ liệu (bảng ở mục *Cài đặt và chạy*).
+- **Trang chào**: ba điểm nhấn tính năng có biểu tượng, nền chấm lưới nhẹ, số liệu "0 đơn đã giao" được thay bằng "24/7 đặt đơn trực tuyến" khi chưa có đơn, chân trang ghi công OpenStreetMap.
+- **Toàn ứng dụng**: nút có phản hồi khi bấm và đổi màu khi rê chuột, nút bị khoá mờ rõ ràng, thẻ đơn nổi nhẹ khi rê chuột, trạng thái rỗng có khung và biểu tượng, thông báo lỗi bản đồ nền dùng màu cảnh báo (vàng) và chỉ hiện một lần mỗi phiên.
+- **OpenStreetMap / OSRM chạy ổn định hơn**: máy chủ OSRM công cộng chỉ cho khoảng **1 yêu cầu mỗi giây**; bản cũ gửi 3 yêu cầu cùng lúc nên dễ bị từ chối (HTTP 429) rồi quay về vẽ đường thẳng. Nay gửi **lần lượt, cách nhau ≥ 1,1 giây**, gặp 429 thì chờ và thử lại (tối đa 3 lần, không tính là máy chủ hỏng), và **nhớ đường đã tìm** trong trình duyệt (80 tuyến gần nhất) nên mở lại trang không phải hỏi lại. Kiểm thử với máy chủ giả có giới hạn 1 yêu cầu/giây: 3 chuyến cùng lúc vẽ đủ đường thật, không báo lỗi; tải lại trang: 0 yêu cầu mới.
+
+| Trang đăng nhập (máy tính) | Trang đăng nhập (điện thoại) |
+|---|---|
+| ![](docs/screenshots/100-dang-nhap-v13.png) | ![](docs/screenshots/101-dang-nhap-v13-dien-thoai.png) |
+
+## Kiểm tra toàn diện (v12.2)
+
+Bản này được rà soát bằng ba cách, có thể chạy lại bằng các script Playwright / Node trong lúc phát triển:
+
+| Cách kiểm tra | Phạm vi | Kết quả và việc đã sửa |
+|---|---|---|
+| Duyệt tự động mọi trang | 3 vai trò × mọi trang (32 trang) × máy tính 1360 px và điện thoại 390 px; bắt lỗi JavaScript, lỗi máy chủ 5xx, tràn ngang, nút bị đẩy ra ngoài khung, nút / ô nhập thiếu tên | Không có lỗi JavaScript. Sửa: **nút "Đã giao" / "Giao thất bại" của shipper bị đẩy ra ngoài khung bên trái, không bấm được** (luật CSS của menu ⋯ lan sang thẻ điểm giao); chú giải bản đồ lấp ló dưới thanh tìm kiếm trên điện thoại; nút chỉ có biểu tượng thiếu tên cho trình đọc màn hình |
+| Gửi dữ liệu xấu vào mọi API | 145 API × 3 vai trò × 13 kiểu giá trị (rỗng, âm, số cực lớn, `NaN`, chữ, mã HTML, emoji dài, ký tự điều khiển) | Sửa: `GET /api/audit/export` trả lỗi máy chủ 500 khi `from` / `to` không phải số (nay trả 400 và không ghi nhật ký) |
+| Bấm thử trọn vòng đời đơn bằng giao diện | Khách đặt đơn → shipper nhận → nhập sai mã → nhập đúng mã + thu tiền thu hộ → khách xem chi tiết (đánh giá, tip, yêu thích, khiếu nại, in hoá đơn); huỷ khi đang tìm shipper (miễn phí); giao thất bại → khách hẹn giao lại | Tất cả chạy đúng |
+
+**Nâng cấp kèm theo:** trang *Chuyến của tôi* của shipper đưa **đơn đang giao và nút Đã giao lên đầu** khi đang có đơn (thẻ bật nhận đơn, vị trí, tiền thu hộ xuống dưới; khi đang có đơn chỉ hiện một dòng vị trí vì vị trí tự cập nhật theo hành trình); ô bản đồ OpenStreetMap tải lỗi được ẩn thay vì hiện ảnh hỏng, lỗi liên tục thì báo một lần; tra cứu công khai không còn lộ tên shipper **đang được mời** (chỉ hiện khi họ đã nhận, khớp giả định 39).
 
 ## Bản một file HTML
 
@@ -1182,7 +1279,7 @@ make diff-standalone                    # kiểm tra lại: so khớp với serv
 |---|---|---|
 | Core + Tích hợp | `Graph.h/.cpp`, `History.h`, `Trie.h/.cpp`, `Trace.h/.cpp`, `Auth.h/.cpp`, `main.cpp`, `WebServer.h/.cpp`, `Json.h`, `web/`, README | Class Graph (thêm/xoá/sửa nút, cạnh, in đồ thị, kẹt xe / đóng đường, giờ cao điểm), mô phỏng từng bước, hoàn tác bằng 2 ngăn xếp, tìm điểm bằng Trie, đăng nhập & phân quyền, menu chính, web server, review & merge PR |
 | Duyệt đồ thị + File IO | `Traversal.h/.cpp`, `FileIO.h/.cpp`, `tools/gen_city.py` | BFS, DFS, liên thông, vùng giao hàng, đọc/ghi `map.txt` và `orders.txt`, dữ liệu mẫu và đô thị lớn |
-| Đường đi ngắn nhất | `MinHeap.h`, `ShortestPath.h/.cpp` | Min-Heap tự cài, Dijkstra 3 phiên bản, A*, Dijkstra theo giờ, getPath, K tuyến ngắn nhất (Yen), benchmark |
+| Đường đi ngắn nhất | `MinHeap.h`, `ShortestPath.h/.cpp` | Min-Heap tự cài, Dijkstra 3 phiên bản, Dijkstra theo giờ, getPath, K tuyến ngắn nhất (Yen), benchmark |
 | Bellman-Ford + Dự toán | `BellmanFord.h/.cpp`, `Estimator.h/.cpp` | Bellman-Ford, chu trình âm, dự toán chi phí / thời gian của tuyến |
 | Điều phối giao hàng | `Dispatcher.h/.cpp`, `Operations.h/.cpp`, `Analysis.h/.cpp`, `Pricing.h/.cpp` | Order, hàng đợi ưu tiên đơn gấp, Nearest Neighbor, TSP bitmask, theo hạn giao + tìm kiếm cục bộ, so sánh kết quả, vận hành ca giao và tình huống đặc biệt, biểu phí và đối soát COD; phần mở rộng phân tích mạng (Tarjan, MST, vị trí kho) |
 
@@ -1305,3 +1402,36 @@ Yêu cầu nâng cấp có một số điểm chưa nói rõ; dưới đây là 
 61. **Tab Cài đặt dùng chung một biểu mẫu:** chuyển tab chỉ ẩn / hiện nhóm ô (thuộc tính `hidden`), nên giá trị đã sửa ở tab khác không mất và nút Lưu vẫn gửi toàn bộ cấu hình một lần như trước. Mã giảm giá có API riêng nên không bị ảnh hưởng.
 62. **Menu ⋯ ở bảng tài khoản** gồm các thao tác khó hoàn tác (Khoá, Vô hiệu hoá, Xoá); các thao tác này vẫn hỏi xác nhận / lý do như cũ. Menu được đặt theo toạ độ của nút để không bị cắt bởi bảng cuộn ngang, và lật lên trên khi gần mép dưới.
 63. **Trạng thái mở / đóng của mục thu gọn** (Hồ sơ, Thêm đơn, Tuỳ chọn ca, tab Báo cáo, cột phụ) chỉ nhớ trong phiên làm việc của trang, không ghi xuống máy chủ; vào lại trang thì về mặc định gọn.
+64. **Không cần ánh xạ toạ độ sang Google:** dữ liệu bản đồ (`map.txt`…) đã ghi vĩ độ / kinh độ thật của TP.HCM và `mapview.js` dùng sẵn phép chiếu Web Mercator giống Google, nên nền Google chỉ cần đặt cùng tâm và mức phóng, không có bước quy đổi nào. Đồ thị mô phỏng `map_city.txt` cũng nằm ở toạ độ thật.
+65. **Google làm nền và nguồn đường vẽ, lớp tương tác vẫn là SVG của hệ thống:** điểm, đường cấm tải, đơn gấp, chọn điểm, kéo đường vẫn dùng chung một lớp vẽ cho hai nền. Google chỉ nhận mức zoom nguyên (bản raster), phần lẻ được bù bằng CSS scale nên giữa hai mức zoom ảnh nền có thể hơi mờ.
+66. **Khoá API nhập ở giao diện, lưu `localStorage` từng trình duyệt** (không ở trang Cài đặt vì trang đó chỉ dành cho quản trị viên trong khi shipper và khách cũng dùng bản đồ). Khoá Maps JavaScript API vốn lộ ra trình duyệt nên bảo vệ bằng giới hạn domain và API ở Google Cloud. Repo không chứa khoá nào.
+67. **Google là mặc định khi đã có khoá, còn dự phòng luôn sẵn:** mọi lỗi (chưa có khoá, khoá sai, chưa bật Routes API, hết hạn mức, mất mạng, chạm trần lượt) đều quay về sơ đồ / đường thẳng theo đồ thị và Dijkstra của đồ án, kèm một thông báo ngắn; không có lỗi trắng trang. Phần mềm không gọi Google trước khi người dùng nhập khoá.
+68. **CSP và Referrer-Policy được nới tối thiểu** (`Referrer-Policy: strict-origin-when-cross-origin` thay cho `same-origin`, thêm các miền Google vào `script-src`, `img-src`, `connect-src`, `worker-src blob:`), có kiểm thử trong `test_web.cpp` (977 kiểm tra). Không đổi API hay thuật toán.
+69. **Liên kết "Dẫn đường" dùng URL chuẩn của Google Maps (`/maps/dir/?api=1`)** thay vì gọi API: miễn phí, không cần khoá; với lộ trình nhiều trạm chỉ 9 điểm trung gian đầu được chuyển sang Google.
+70. **"Tìm đường ngắn nhất trên Google" chỉ thay đổi phần hiển thị, không thay thuật toán của đồ án:** trang *Tìm đường* hỏi Google (Routes API, `computeRoutes` có tuyến thay thế) rồi chọn tuyến ngắn nhất theo mét (tiêu chí *Ngắn nhất* và *Rẻ nhất*, vì Google không có tiêu chí chi phí đường) hoặc nhanh nhất theo giây (*Nhanh nhất*), và vẫn hiện kết quả Dijkstra để so sánh. Số liệu của máy chủ (cước, ETA ca, phân chuyến) giữ nguyên để bản C++ và bản HTML khớp nhau (chạy so khớp 468 bước, 0 khác biệt); đổi chúng sang Google sẽ phụ thuộc mạng và khoá nên không phù hợp với bài tập cấu trúc dữ liệu.
+71. **Đường chuyến theo đúng các điểm của đồ án:** lộ trình của chuyến được gửi cho Google như chuỗi điểm dừng theo thứ tự đồ thị đã chọn (không để Google tự đổi thứ tự giao), nên đường vẽ đi qua đúng các điểm do thuật toán điều phối chọn; Google chỉ quyết định cách nối hai điểm liền kề trên phố. Biểu tượng shipper đang chạy vẫn nội suy theo đồ thị nên có thể lệch vài chục mét khỏi đường Google.
+72. **Trần 400 lượt gọi mỗi lần mở trang và bộ nhớ đệm trong phiên** là biện pháp chống tốn tiền; số liệu thanh toán thật của Google quyết định chi phí, nên người dùng nên đặt ngân sách và cảnh báo trong Google Cloud.
+
+**Nghiệp vụ kiểu Grab v12**
+
+73. **Loại hàng**: đơn cũ (file, client cũ không gửi `category`) được coi là *Khác*; khách chỉ phải tick cam kết hàng cấm khi chính họ chọn loại hàng (đặt mới hoặc đổi loại), nhân viên tạo đơn hộ không cần tick. Loại hàng chỉ để hiển thị và cảnh báo, **không đổi cước hay thuật toán điều phối**.
+74. **Trò chuyện trong đơn** chỉ mở khi đơn đã có shipper và còn đang chạy (*Đã phân công*, hoặc *Thất bại* chờ giao lại); trước đó khách chưa biết shipper là ai (giả định 39), sau khi giao xong / huỷ / hoàn thì chỉ xem. Tin nhắn lưu lại để xử lý khiếu nại; xuống dòng được đổi thành dấu cách. Giao diện hỏi tin mới mỗi 4 giây khi hộp chat mở (không dùng WebSocket).
+75. **Tip** lấy từ ví đối soát của khách (như cước), nên chịu hạn mức nợ phí: nếu sau khi tip mà nợ vượt hạn mức thì bị từ chối. Tip không đi qua sổ COD và không tính vào điểm tin cậy; thu nhập shipper hiển thị tách riêng *tiền tip*. Đơn giao từ dữ liệu cũ (không có thời điểm giao thật) thì không áp hạn 7 ngày.
+76. **Chặn / yêu thích** chỉ áp dụng cho shipper đã từng giao (hoặc đang giao) đơn của khách đó, để khách không dò được danh sách tài xế. Một shipper không thể vừa yêu thích vừa bị chặn: chặn thì tự bỏ yêu thích và ngược lại. Xoá tài khoản khách thì xoá danh sách của họ; đổi tên shipper thì danh sách đổi theo.
+77. **Hạn mức tiền mặt COD** so sánh *tiền COD shipper đang giữ chưa nộp + số phải thu của đơn* với `cod.holdLimit`; đơn không thu tiền vẫn được mời. Shipper nộp tiền ở sổ COD là được mời lại.
+78. **Đếm lời mời bỏ lỡ** chỉ nằm trong bộ nhớ (khởi động lại server là về 0). Chỉ tính lời mời **tự động** (không tính chuyến quản trị viên phân công tay); tắt *sẵn sàng* thì không tính (giả định 45).
+79. **Bản đồ nền mặc định** là **OpenStreetMap + đường đi OSRM** (miễn phí, không cần thẻ); Google Maps vẫn chọn được nếu có khoá. Hai dịch vụ công cộng này có giới hạn lượt dùng hợp lý; mất mạng thì quay về sơ đồ của đồ án như giả định 67.
+80. **Mã nhận hàng cho người nhận**: tra cứu công khai (mã đơn + đúng SĐT người nhận trên đơn) trả thêm mã khi đơn *Đang giao* (shipper đã nhận) hoặc *Thất bại* chờ giao lại; trước khi có shipper nhận, sau khi giao / huỷ / hoàn thì không hiện. Tra cứu vẫn giới hạn 20 lần / 10 phút mỗi IP để không dò được SĐT. Đơn không có SĐT người nhận thì chỉ người gửi chuyển mã được (giao diện nhắc điều này). Không gửi SMS thật: nút *Gửi SMS* mở ứng dụng nhắn tin của điện thoại với nội dung soạn sẵn.
+81. **Shipper chạy theo đường thật**: vị trí vẫn do đồng hồ ca và lộ trình của đồ án quyết định (tỉ lệ quãng đã đi trên mỗi cạnh của đồ thị); giao diện chỉ đặt điểm đó lên đường OSRM / Google tương ứng theo cùng tỉ lệ độ dài. Chưa tải xong đường thật hoặc đang ở nền sơ đồ thì xe chạy thẳng như trước.
+82. **Rà soát v12.2** dùng dữ liệu mẫu và đường OpenStreetMap / OSRM giả (máy kiểm tra không ra được Internet); kiểm tra bằng mắt chỉ trên Chromium. Thao tác quản trị đổi cả bản đồ (vd *Tạo bản đồ mới*) làm khách không còn điểm giao để chọn: đây là hành vi đúng của quyền quản trị, không phải lỗi.
+83. **Bỏ nút tài khoản dùng thử** ở mọi chế độ (kể cả chế độ demo của máy chủ): nút đó điền sẵn mật khẩu trong mã trang, ai mở trang cũng thấy được. Hộp thư giả lập ở chế độ demo vẫn giữ để thử quên mật khẩu.
+84. **OSRM**: giới hạn 1 yêu cầu/giây và bộ nhớ đệm trên trình duyệt chỉ áp dụng cho OpenStreetMap; kết quả của Google **không** được lưu xuống máy (điều khoản của Google). Bộ nhớ đệm OSRM nằm trong `localStorage` (khoá `osrm.cache.v1`), xoá dữ liệu trang là mất.
+85. **Thiết kế v14** dùng `:has()` để tô sọc trạng thái của thẻ đơn; trình duyệt cũ không hỗ trợ `:has()` chỉ mất sọc màu, mọi thứ khác giữ nguyên. Dải màu chỉ dùng cho điểm nhấn để chữ trên nền trắng vẫn đủ tương phản.
+86. **v15: nhận đơn tự do.** Khi bật `match.auto`, đơn *Chờ giao* hiện trên bảng của **mọi** shipper đủ điều kiện; ai bấm *Nhận đơn* trước thì giao (yêu cầu chạy tuần tự dưới một khoá nên không thể có hai người cùng nhận; người sau nhận HTTP 409 kèm lý do). Mỗi shipper chỉ cầm **một đơn** tại một thời điểm (giao xong mới nhận tiếp), vì chuyến được dựng riêng cho từng đơn. Thông báo "Có đơn mới" gửi **một lần** khi đơn mở ra (và khi đơn quay lại bảng sau khi bị nhả), không gửi lặp.
+87. **Giao hàng hai bước.** *Đã giao tới* (shipper) → *Chờ xác nhận* → *Đã nhận hàng* (người nhận). Tiền thu hộ ghi vào sổ COD **lúc bấm *Đã giao tới*** (shipper đã cầm tiền); nếu người nhận báo chưa nhận được thì khoản đó không ghi lại lần hai khi shipper giao tới lần nữa, và quản trị viên được báo để kiểm tra. Mỗi đơn báo "chưa nhận được" tối đa **2 lần**, sau đó người nhận phải gửi khiếu nại.
+88. **Tự hoàn tất**: `receive.autoMinutes` (mặc định 30 phút, 0 = không tự hoàn tất, tối đa 1440), tính theo giờ thật kể từ lúc *Đã giao tới*. Đơn tự hoàn tất ghi sự kiện `auto_received` trong nhật ký đơn. Chọn 30 phút để trả tiền cho shipper kịp thời nhưng vẫn đủ lâu để người nhận bấm; có thể chỉnh ở *Cấu hình → Nhận đơn tự do*.
+89. **Người nhận xác nhận** bằng hai cách: tài khoản khách chủ đơn (nút ở *Đơn của tôi*), hoặc **không cần tài khoản** bằng trang *Tra cứu đơn* với mã đơn + đúng SĐT người nhận (giống tra cứu công khai, giới hạn 12 lần / 10 phút mỗi IP). Người nhận chỉ cần SĐT bắt đầu bằng 0 và khớp với SĐT trên đơn. Quản trị viên được xác nhận thay (`order/receive`) hoặc giao thay (`order/deliver`, bắt buộc ghi lý do; đơn thu hộ chưa *Đã giao tới* thì phải xác nhận đã thu đúng số tiền).
+90. **Bỏ mã nhận hàng 4 số** (giả định 80 không còn áp dụng; trường `code` vẫn nằm trong file dữ liệu để file cũ đọc được nhưng không hiển thị và không dùng để xác nhận). **Bỏ đánh giá khách** của shipper: file `customer_reviews.txt` không còn được đọc / ghi, route `order/rate-customer` không còn. Khách vẫn đánh giá shipper.
+91. **Nhả đơn** (`order/release`) giữ nguyên: chỉ khi chưa lấy hàng, bắt buộc lý do, đơn về bảng và shipper đó không thấy lại đơn ấy. Tự tạm nghỉ (`match.missLimit`, mặc định 3) nay đếm số đơn **nhả liên tiếp**; giao xong một đơn (người nhận xác nhận) thì đếm lại từ đầu. Giả định 39 và 47 (hạn trả lời lời mời, đánh giá khách) không còn áp dụng; `match.offerSeconds` còn trong file cấu hình cho bản cũ nhưng không có tác dụng với nhận đơn tự do.
+92. **Số điện thoại**: bắt đầu bằng `0`, dài 10–11 chữ số (dấu cách, dấu chấm, gạch ngang được bỏ đi như trước; `+84…` **không** được đổi tự động nên bị từ chối vì không bắt đầu bằng 0). Không còn ép đầu `09`, nên các đầu số `03x`, `05x`, `07x`, `08x`, `02x` (số bàn) đều hợp lệ.
+93. **Bỏ A\***: xoá hàm `astar`, API `benchmark/p2p`, lựa chọn A\* ở trang *Mô phỏng*, *Phòng thí nghiệm* và *Tuyến đường*. `straightLineKm` giữ lại vì còn dùng cho ước lượng khoảng cách. Các bộ kiểm thử cũ bị sửa đúng phần liên quan đến luồng giao hàng, A\* và đánh giá khách (không nới lỏng kiểm tra nào khác); kết quả thuật toán Dijkstra, Bellman-Ford, Yen, TSP và điều phối **không đổi**.

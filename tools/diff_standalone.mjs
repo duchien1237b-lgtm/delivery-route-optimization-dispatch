@@ -197,7 +197,7 @@ try {
   await step('thêm shipper', 'POST', 'shipper/add', { name: 'Shipper Phụ', capacity: 15, vehicle: 0 });
   await step('sửa shipper', 'POST', 'shipper/update', { index: 4, name: 'Shipper Phụ 2', capacity: 18, vehicle: 0 });
   await step('xoá shipper', 'POST', 'shipper/remove', { index: 4 });
-  await step('admin đường đi', 'GET', 'path', { src: 0, dst: 9, algo: 'astar', vehicle: 0, criterion: 'time', depart: 480 });
+  await step('admin đường đi', 'GET', 'path', { src: 0, dst: 9, algo: 'dijkstra', vehicle: 0, criterion: 'time', depart: 480 });
   await step('admin phân tích', 'GET', 'analysis', { vehicle: 0 });
   await step('admin k-paths', 'GET', 'kpaths', { src: 0, dst: 9, k: 3 });
   await step('admin bellman', 'GET', 'bellman', { src: 0 });
@@ -223,8 +223,8 @@ try {
   await step('đặt đơn thiếu', 'POST', 'order/add', { destination: 5 });
   await step('đặt đơn COD', 'POST', 'order/add', { destination: 9, weight: 1.5, recipient: 'Anh Bảo', phone: '0933333333', cod: 150000 }, (b, v) => { v.o2 = b.created; });
   await step('đặt đơn 3', 'POST', 'order/add', { destination: 6, weight: 2, recipient: 'Chị Hà', phone: '0944444444' }, (b, v) => { v.o3 = b.created; });
-  await step('xem đơn mình', 'GET', 'order/get', (v) => ({ id: v.o1 }), (b, v) => { v.code1 = b.order?.code; });
-  await step('xem đơn 2', 'GET', 'order/get', (v) => ({ id: v.o2 }), (b, v) => { v.code2 = b.order?.code; });
+  await step('xem đơn mình', 'GET', 'order/get', (v) => ({ id: v.o1 }), (b, v) => { v.code1 = b.order?.status; });
+  await step('xem đơn 2', 'GET', 'order/get', (v) => ({ id: v.o2 }), (b, v) => { v.code2 = b.order?.status; });
   await step('xem đơn người khác', 'GET', 'order/get', { id: 101 });
   await step('xem đơn không có', 'GET', 'order/get', { id: 99999 });
   await step('hoá đơn', 'GET', 'order/invoice', (v) => ({ id: v.o1 }));
@@ -280,7 +280,8 @@ try {
   await step('shipper nhận chuyến', 'POST', 'trip/accept', (v) => ({ id: v.trips[0] ?? 1 }));
   await step('shipper nhận lại', 'POST', 'trip/accept', (v) => ({ id: v.trips[0] ?? 1 }));
   await step('shipper state 2', 'GET', 'state', {}, (b, v) => { v.mine = (b.orders || []).filter((o) => o.status === 1).map((o) => o.id); });
-  await step('shipper giao sai mã', 'POST', 'order/deliver', (v) => ({ id: v.mine[0] ?? 0, code: '0000' }));
+  await step('shipper giao tới', 'POST', 'order/arrive', (v) => ({ id: v.mine[0] ?? 0 }));
+  await step('shipper tự xác nhận giao (không được)', 'POST', 'order/deliver', (v) => ({ id: v.mine[0] ?? 0, force: 1, note: 'x' }));
   await step('shipper báo thất bại', 'POST', 'shift/fail', (v) => ({ id: v.mine[v.mine.length - 1] ?? 0, reason: 0 }));
   await step('shipper đồng hồ', 'POST', 'shift/progress', { t: 50 });
   await step('shipper đổi xe khi có chuyến', 'POST', 'shipper/vehicle', { vehicle: 0, capacity: 25, plate: '59B1-23456' });
@@ -296,9 +297,9 @@ try {
     await login(u, p);
     await step(`${u} state`, 'GET', 'state', {}, (b, v) => { v.trips = (b.shift?.trips || []).filter((t) => !t.accepted).map((t) => t.id); });
     await step(`${u} nhận`, 'POST', 'trip/accept', (v) => ({ id: v.trips[0] ?? 0 }));
-    await step(`${u} giao đơn 1`, 'POST', 'order/deliver', (v) => ({ id: v.o1, code: v.code1 }));
-    await step(`${u} giao đơn COD thiếu tiền`, 'POST', 'order/deliver', (v) => ({ id: v.o2, code: v.code2 }));
-    await step(`${u} giao đơn COD`, 'POST', 'order/deliver', (v) => ({ id: v.o2, code: v.code2, cash: 150000 }));
+    await step(`${u} giao tới đơn 1`, 'POST', 'order/arrive', (v) => ({ id: v.o1 }));
+    await step(`${u} giao tới COD thiếu tiền`, 'POST', 'order/arrive', (v) => ({ id: v.o2 }));
+    await step(`${u} giao tới COD`, 'POST', 'order/arrive', (v) => ({ id: v.o2, cash: 150000 }));
     await step(`${u} COD`, 'GET', 'cod');
     await step(`${u} nộp COD`, 'POST', 'cod/remit', { handed: 140000 });
     await logout();
@@ -360,7 +361,7 @@ try {
   await logout();
   await login('binh', 'shipper123');
   await step('binh nhận chuyến', 'POST', 'trip/accept', (v) => ({ id: v.tripB ?? 0 }));
-  await step('binh giao thiếu tiền', 'POST', 'order/deliver', (v) => ({ id: v.p1, code: '0000', cash: 100000 }));
+  await step('binh giao tới thiếu tiền', 'POST', 'order/arrive', (v) => ({ id: v.p1, cash: 100000 }));
   await step('binh báo thất bại p3', 'POST', 'shift/fail', (v) => ({ id: v.p3, reason: 0 }));
   await logout();
   await login('admin', 'admin123');
@@ -438,26 +439,10 @@ try {
 
   // ---------- Pha 2: ghép đơn tự động kiểu Grab (đồng hồ ca đứng, lời mời giữ 600 giây)
   const SHIP_USER = { 'Anh Tuấn': ['tuan', 'shipper123'], 'Chị Bình': ['binh', 'shipper123'], 'Anh Cường': ['cuong', 'shipper123'], 'Anh Mới': ['shipmoi', 'Ship@2026x'] };
-  const nominee = async (label, key, actions) => {
-    await login('admin', 'admin123');
-    await step(`${label}: xem lời mời`, 'GET', 'state', {}, (b, v) => {
-      const t = (b.shift?.trips || []).find((x) => !x.accepted && x.stops.some((st) => st.order === v[key]));
-      v.nom = t ? SHIP_USER[t.name] : null;
-      v.trip = t ? t.id : null;
-    });
-    await logout();
-    const [u, pw] = C.vars.nom || [];
-    if (!u) {
-      bad++;
-      console.log(`✗ ${label}: không có lời mời cho đơn ${key}`);
-      if (process.env.V) {
-        await login('admin', 'admin123');
-        const st = await cpp('GET', 'state');
-        console.log(JSON.stringify((st.body.orders || []).filter((o) => o.id >= 112).map((o) => [o.id, o.status, o.noShipper, o.tried, o.offeredTo])), JSON.stringify(st.body.shippers), JSON.stringify((st.body.shift.trips || []).map((t) => [t.id, t.name, t.accepted, t.stops.map((x) => x.order)])));
-        await logout();
-      }
-      return;
-    }
+  // Nhận đơn tự do: shipper `who` bấm nhận đơn v[key] rồi chạy các thao tác tiếp theo
+  const nominee = async (label, key, actions, who = 'Anh Tuấn') => {
+    for (const V of [C.vars, J.vars]) { V.nom = SHIP_USER[who]; V.trip = V[key]; }
+    const [u, pw] = C.vars.nom;
     await login(u, pw);
     await actions();
     await logout();
@@ -481,7 +466,7 @@ try {
   await login('anphat', 'khach123');
   await step('p2 đặt đơn q1', 'POST', 'order/add', { destination: 8, weight: 2, recipient: 'Cô Lan', phone: '0911111111', note: 'Gọi trước' }, (b, v) => { v.q1 = b.created; });
   await step('p2 khách xem state', 'GET', 'state');
-  await step('p2 khách xem đơn q1', 'GET', 'order/get', (v) => ({ id: v.q1 }), (b, v) => { v.code1 = b.order?.code; });
+  await step('p2 khách xem đơn q1', 'GET', 'order/get', (v) => ({ id: v.q1 }), (b, v) => { v.code1 = b.order?.status; });
   await step('p2 khách sửa đơn đã mời', 'POST', 'order/edit', (v) => ({ id: v.q1, weight: 3 }));
   await step('p2 khách tìm lại khi đang mời', 'POST', 'order/retry', (v) => ({ id: v.q1 }));
   await step('p2 khách huỷ thiếu lý do', 'POST', 'order/cancel', (v) => ({ id: v.q1 }));
@@ -493,30 +478,51 @@ try {
   await step('p2 khách xem danh sách', 'GET', 'orders/list');
   await logout();
   await nominee('p2 q2', 'q2', async () => {
-    await step('p2 shipper xem lời mời', 'GET', 'state');
-    await step('p2 từ chối thiếu lý do', 'POST', 'trip/decline', (v) => ({ id: v.trip, reason: 'x' }));
-    await step('p2 từ chối', 'POST', 'trip/decline', (v) => ({ id: v.trip, reason: 'Đang nghỉ trưa' }));
-    await step('p2 từ chối lại', 'POST', 'trip/decline', (v) => ({ id: v.trip, reason: 'Đang nghỉ trưa' }));
+    await step('p2 shipper xem bảng đơn chờ', 'GET', 'orders/open');
+    await step('p2 shipper nhận q2', 'POST', 'order/claim', (v) => ({ id: v.q2 }));
+    await step('p2 nhả thiếu lý do', 'POST', 'order/release', (v) => ({ id: v.q2 }));
+    await step('p2 nhả q2', 'POST', 'order/release', (v) => ({ id: v.q2, reason: 'Đang nghỉ trưa' }));
+    await step('p2 nhả lại', 'POST', 'order/release', (v) => ({ id: v.q2, reason: 'Đang nghỉ trưa' }));
+    await step('p2 nhận lại đơn đã nhả', 'POST', 'order/claim', (v) => ({ id: v.q2 }));
   });
   await nominee('p2 q2 lần 2', 'q2', async () => {
-    await step('p2 nhận lời mời', 'POST', 'trip/accept', (v) => ({ id: v.trip }));
+    await step('p2 nhận đơn', 'POST', 'order/claim', (v) => ({ id: v.trip }));
     await step('p2 nhả thiếu lý do', 'POST', 'order/release', (v) => ({ id: v.q2 }));
     await step('p2 nhả đơn người khác', 'POST', 'order/release', { id: 101, reason: 'Thử' });
     await step('p2 nhả đơn q2', 'POST', 'order/release', (v) => ({ id: v.q2, reason: 'Xe hết xăng' }));
     await step('p2 shipper state sau nhả', 'GET', 'state');
-  });
+  }, 'Chị Bình');
   await nominee('p2 q2 lần 3', 'q2', async () => {
-    await step('p2 nhận lần 3', 'POST', 'trip/accept', (v) => ({ id: v.trip }));
-  });
+    await step('p2 nhận lần 3', 'POST', 'order/claim', (v) => ({ id: v.trip }));
+    await step('p2 nhận lại khi đang giữ', 'POST', 'order/claim', (v) => ({ id: v.trip }));
+  }, 'Anh Cường');
   await login('anphat', 'khach123');
-  await step('p2 khách xem q2 đã nhận', 'GET', 'order/get', (v) => ({ id: v.q2 }), (b, v) => { v.code2 = b.order?.code; });
+  await step('p2 khách xem q2 đã nhận', 'GET', 'order/get', (v) => ({ id: v.q2 }), (b, v) => { v.code2 = b.order?.status; });
   await step('p2 khách xem state đã nhận', 'GET', 'state');
   await step('p2 khách theo dõi', 'GET', 'orders/list', { status: '1,7,0' });
   await logout();
   await nominee('p2 q3', 'q3', async () => {
-    await step('p2 q3 nhận', 'POST', 'trip/accept', (v) => ({ id: v.trip }));
-    await step('p2 q3 giao sai mã', 'POST', 'order/deliver', (v) => ({ id: v.q3, code: '0000' }));
+    await step('p2 q3 nhận', 'POST', 'order/claim', (v) => ({ id: v.trip }));
+    await step('p2 q3 shipper tự xác nhận đã nhận (không được)', 'POST', 'order/receive', (v) => ({ id: v.q3 }));
+    await step('p2 q3 shipper tự giao (không được)', 'POST', 'order/deliver', (v) => ({ id: v.q3, force: 1, note: 'x' }));
+    await step('p2 q3 giao tới', 'POST', 'order/arrive', (v) => ({ id: v.q3 }));
+    await step('p2 q3 giao tới lần 2', 'POST', 'order/arrive', (v) => ({ id: v.q3 }));
   });
+  await login('khachvip', 'Huong@2027x');
+  await step('p2 q3 khách khác xác nhận hộ', 'POST', 'order/receive', (v) => ({ id: v.q3 }));
+  await logout();
+  await login('anphat', 'khach123');
+  await step('p2 q3 chưa nhận được hàng', 'POST', 'order/dispute', (v) => ({ id: v.q3, reason: 'Chưa thấy shipper' }));
+  await step('p2 q3 xem sau báo', 'GET', 'order/get', (v) => ({ id: v.q3 }));
+  await logout();
+  await nominee('p2 q3 giao tới lại', 'q3', async () => {
+    await step('p2 q3 giao tới lại', 'POST', 'order/arrive', (v) => ({ id: v.q3 }));
+  });
+  await login('anphat', 'khach123');
+  await step('p2 q3 theo dõi: chờ xác nhận', 'GET', 'orders/list', { status: '8' });
+  await step('p2 q3 xác nhận đã nhận', 'POST', 'order/receive', (v) => ({ id: v.q3 }));
+  await step('p2 q3 xác nhận lại', 'POST', 'order/receive', (v) => ({ id: v.q3 }));
+  await logout();
   await login('admin', 'admin123');
   await step('p2 admin thu hồi chuyến không có', 'POST', 'trip/recall', { id: 9999, reason: 'Thử' });
   await step('p2 admin tìm lại q2 đang giao', 'POST', 'order/retry', (v) => ({ id: v.q2 }));
@@ -571,17 +577,17 @@ try {
   await logout();
   await login('khachvip', 'Huong@2027x');
   await step('p2 vip tìm lại q4', 'POST', 'order/retry', (v) => ({ id: v.q4 }));
-  await step('p2 vip xem q4', 'GET', 'order/get', (v) => ({ id: v.q4 }), (b, v) => { v.code4 = b.order?.code; });
+  await step('p2 vip xem q4', 'GET', 'order/get', (v) => ({ id: v.q4 }), (b, v) => { v.code4 = b.order?.status; });
   await logout();
   await nominee('p2 q4', 'q4', async () => {
-    await step('p2 q4 nhận', 'POST', 'trip/accept', (v) => ({ id: v.trip }));
-    await step('p2 q4 giao', 'POST', 'order/deliver', (v) => ({ id: v.q4, code: v.code4 ?? '0000' }));
-    await step('p2 q4 đánh giá khách thiếu sao', 'POST', 'order/rate-customer', (v) => ({ id: v.q4, stars: 9 }));
-    await step('p2 q4 đánh giá khách', 'POST', 'order/rate-customer', (v) => ({ id: v.q4, stars: 5, comment: 'Khách dễ tính' }));
-    await step('p2 q4 đánh giá khách lại', 'POST', 'order/rate-customer', (v) => ({ id: v.q4, stars: 4 }));
-    await step('p2 q4 đánh giá đơn chưa giao', 'POST', 'order/rate-customer', (v) => ({ id: v.q2, stars: 4 }));
-    await step('p2 shipper state có điểm khách', 'GET', 'state');
-  });
+    await step('p2 q4 nhận', 'POST', 'order/claim', (v) => ({ id: v.q4 }));
+    await step('p2 q4 giao tới', 'POST', 'order/arrive', (v) => ({ id: v.q4 }));
+    await step('p2 q4 đánh giá khách (đã bỏ)', 'POST', 'order/rate-customer', (v) => ({ id: v.q4, stars: 5 }));
+    await step('p2 shipper state', 'GET', 'state');
+  }, 'Chị Bình');
+  await login('khachvip', 'Huong@2027x');
+  await step('p2 q4 xác nhận đã nhận', 'POST', 'order/receive', (v) => ({ id: v.q4 }));
+  await logout();
   await login('admin', 'admin123');
   await step('p2 admin state cuối pha', 'GET', 'state');
   await step('p2 admin cấu hình tắt ghép', 'POST', 'config/update', { autoMatch: 0 });
@@ -589,6 +595,81 @@ try {
   await step('p2 admin state tắt ghép', 'GET', 'state');
   await step('p2 admin bật lại ghép', 'POST', 'config/update', { autoMatch: 1 });
   await step('p2 admin state bật lại', 'GET', 'state');
+  await logout();
+
+  // ---- p3: nghiệp vụ kiểu Grab v12 (loại hàng, trò chuyện trong đơn, tip, shipper yêu thích / bị chặn, hạn mức tiền mặt, tự tạm nghỉ)
+  await login('khachvip', 'Huong@2027x');
+  await step('p3 đặt đơn loại hàng sai', 'POST', 'order/add', { destination: 6, weight: 1, recipient: 'Anh Chín', phone: '0977777770', category: 'vukhi', pledge: 1 });
+  await step('p3 đặt đơn thiếu cam kết', 'POST', 'order/add', { destination: 6, weight: 1, recipient: 'Anh Chín', phone: '0977777770', category: 'devo' });
+  await step('p3 đặt đơn dễ vỡ', 'POST', 'order/add', { destination: 6, weight: 1, recipient: 'Anh Chín', phone: '0977777770', category: 'devo', pledge: 1 }, (b, v) => { v.q7 = b.created; });
+  await step('p3 nhắn khi chưa có shipper nhận', 'POST', 'order/chat/send', (v) => ({ id: v.q7, text: 'Alo' }));
+  await step('p3 tip đơn chưa giao', 'POST', 'order/tip', (v) => ({ id: v.q7, amount: 10000 }));
+  await step('p3 xem q7', 'GET', 'order/get', (v) => ({ id: v.q7 }), (b, v) => { v.code7 = b.order?.status; });
+  await step('p3 xem q4 đã giao', 'GET', 'order/get', (v) => ({ id: v.q4 }), (b, v) => { v.ship4 = b.order?.carrierInfo?.name; });
+  await step('p3 xem chat đơn người khác', 'GET', 'order/chat', { id: 101 });
+  await logout();
+  await step('p3 người nhận tra cứu khi chưa có shipper', 'GET', 'track', (v) => ({ code: String(v.q7), phone: '0977777770' }));
+  await nominee('p3 q7', 'q7', async () => {
+    await step('p3 q7 nhận', 'POST', 'order/claim', (v) => ({ id: v.q7 }));
+    await step('p3 shipper xem chat', 'GET', 'order/chat', (v) => ({ id: v.q7 }));
+    await step('p3 shipper nhắn rỗng', 'POST', 'order/chat/send', (v) => ({ id: v.q7, text: '   ' }));
+    await step('p3 shipper nhắn quá dài', 'POST', 'order/chat/send', (v) => ({ id: v.q7, text: 'x'.repeat(301) }));
+    await step('p3 shipper nhắn', 'POST', 'order/chat/send', (v) => ({ id: v.q7, text: 'Mình đã lấy hàng,\nđang tới' }));
+    await step('p3 shipper xem sở thích khách', 'GET', 'customer/shippers');
+    await step('p3 shipper tip', 'POST', 'order/tip', (v) => ({ id: v.q7, amount: 5000 }));
+  });
+  const nom7 = C.vars.nom;
+  await step('p3 người nhận tra cứu (chờ xác nhận)', 'GET', 'track', (v) => ({ code: String(v.q7), phone: '0977777770' }));
+  await step('p3 tra cứu sai SĐT', 'GET', 'track', (v) => ({ code: String(v.q7), phone: '0977777771' }));
+  await login('khachvip', 'Huong@2027x');
+  await step('p3 khách xem chat', 'GET', 'order/chat', (v) => ({ id: v.q7 }));
+  await step('p3 khách nhắn', 'POST', 'order/chat/send', (v) => ({ id: v.q7, text: 'Gọi mình khi tới nhé' }));
+  await step('p3 khách thông báo', 'GET', 'notifications');
+  await step('p3 tip lẻ', 'POST', 'order/tip', (v) => ({ id: v.q4, amount: 1500 }));
+  await step('p3 tip quá mức', 'POST', 'order/tip', (v) => ({ id: v.q4, amount: 300000 }));
+  await step('p3 tip q4', 'POST', 'order/tip', (v) => ({ id: v.q4, amount: 20000, note: 'Cảm ơn bạn giao nhanh' }));
+  await step('p3 tip lại q4', 'POST', 'order/tip', (v) => ({ id: v.q4, amount: 20000 }));
+  await step('p3 ví sau tip', 'GET', 'wallet');
+  await step('p3 danh sách shipper', 'GET', 'customer/shippers');
+  await step('p3 yêu thích shipper lạ', 'POST', 'customer/shipper-pref', { shipper: 'Không Ai', action: 'fav' });
+  await step('p3 yêu thích', 'POST', 'customer/shipper-pref', (v) => ({ shipper: v.ship4 ?? '', action: 'fav' }));
+  await step('p3 yêu thích lại', 'POST', 'customer/shipper-pref', (v) => ({ shipper: v.ship4 ?? '', action: 'fav' }));
+  await step('p3 thao tác sai', 'POST', 'customer/shipper-pref', (v) => ({ shipper: v.ship4 ?? '', action: 'xyz' }));
+  await step('p3 chặn', 'POST', 'customer/shipper-pref', (v) => ({ shipper: v.ship4 ?? '', action: 'block' }));
+  await step('p3 xem q4 sau chặn', 'GET', 'order/get', (v) => ({ id: v.q4 }));
+  await step('p3 bỏ chặn', 'POST', 'customer/shipper-pref', (v) => ({ shipper: v.ship4 ?? '', action: 'unblock' }));
+  await step('p3 bỏ chặn lại', 'POST', 'customer/shipper-pref', (v) => ({ shipper: v.ship4 ?? '', action: 'unblock' }));
+  await logout();
+  if (nom7) {
+    await login(nom7[0], nom7[1]);
+    await step('p3 q7 giao tới', 'POST', 'order/arrive', (v) => ({ id: v.q7 }));
+    await step('p3 nhắn sau khi giao', 'POST', 'order/chat/send', (v) => ({ id: v.q7, text: 'Cảm ơn' }));
+    await step('p3 thu nhập có tip', 'GET', 'shipper/stats');
+    await logout();
+    await step('p3 người nhận xác nhận (sai SĐT)', 'POST', 'track/confirm', (v) => ({ code: String(v.q7), phone: '0977777771', action: 'receive' }));
+    await step('p3 người nhận xác nhận', 'POST', 'track/confirm', (v) => ({ code: String(v.q7), phone: '0977777770', action: 'receive' }));
+    await step('p3 tra cứu sau khi giao', 'GET', 'track', (v) => ({ code: String(v.q7), phone: '0977777770' }));
+  }
+  await login('admin', 'admin123');
+  await step('p3 admin xem chat', 'GET', 'order/chat', (v) => ({ id: v.q7 }));
+  await step('p3 tổng đài nhắn', 'POST', 'order/chat/send', (v) => ({ id: v.q7, text: 'Tổng đài đã ghi nhận' }));
+  await step('p3 cấu hình sai missLimit', 'POST', 'config/update', { missLimit: 30 });
+  await step('p3 cấu hình sai tipMax', 'POST', 'config/update', { tipMax: 1500 });
+  await step('p3 hạn mức tiền mặt thấp', 'POST', 'config/update', { codHoldLimit: 1000 });
+  await step('p3 đặt hộ đơn COD', 'POST', 'order/add', { destination: 4, weight: 1, owner: 'anphat', recipient: 'Cô Mười', phone: '0988888880', cod: 50000 }, (b, v) => { v.q8 = b.created; });
+  await step('p3 state hết shipper vì hạn mức', 'GET', 'state');
+  await step('p3 hạn mức tiền mặt lại', 'POST', 'config/update', { codHoldLimit: 5000000, missLimit: 2 });
+  await step('p3 cấu hình', 'GET', 'config');
+  await step('p3 tìm lại q8', 'POST', 'order/retry', (v) => ({ id: v.q8 }));
+  await logout();
+  await nominee('p3 q8 nhả', 'q8', async () => {
+    await step('p3 q8 nhận', 'POST', 'order/claim', (v) => ({ id: v.q8 }));
+    await step('p3 q8 nhả', 'POST', 'order/release', (v) => ({ id: v.q8, reason: 'Xa quá' }));
+    await step('p3 thống kê sau 1 lần', 'GET', 'shipper/stats');
+  });
+  await login('admin', 'admin123');
+  await step('p3 state cuối', 'GET', 'state');
+  await step('p3 nhật ký', 'GET', 'audit', { size: 30 });
   await logout();
 
   await login('admin', 'admin123');
@@ -609,7 +690,7 @@ console.log(`\n${steps} bước, ${bad} bước khác nhau. Mã HTTP: ${JSON.str
 // So file dữ liệu được ghi ra
 const lsm = globalThis.localStorage._m;
 let fileDiffs = 0;
-for (const f of ['users.txt', 'promos.txt', 'addresses.txt', 'reviews.txt', 'stats.txt', 'complaints.txt', 'cod_ledger.txt', 'config.txt', 'shippers.txt', 'customer_ledger.txt', 'customer_reviews.txt']) {
+for (const f of ['users.txt', 'promos.txt', 'addresses.txt', 'reviews.txt', 'stats.txt', 'complaints.txt', 'cod_ledger.txt', 'config.txt', 'shippers.txt', 'customer_ledger.txt', 'customer_reviews.txt', 'order_chat.txt', 'customer_prefs.txt']) {
   const a = fs.existsSync(`${dataDir}/${f}`) ? fs.readFileSync(`${dataDir}/${f}`, 'utf8') : null;
   const b = lsm.get('dt08.f.' + f) ?? null;
   const strip = (t) => t == null ? null : t.split('\n').map((l) => l.replace(/\b1[67]\d{8}\b/g, 'T').replace(/ [0-9a-f]{16} [0-9a-f]{64}/g, ' SALT HASH').replace(/(\s|^)\d{4}(?=\s|$)/g, '$1CODE')).join('\n');

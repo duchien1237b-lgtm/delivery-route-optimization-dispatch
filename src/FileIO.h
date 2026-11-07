@@ -63,6 +63,9 @@ struct OrderRecord {
     long long cancelFee = 0;         // huy=6000       phí huỷ đã thu (VND)
     std::string proofNote;           // bc=Gui_bao_ve  ghi chú / ảnh bằng chứng khi giao
     long long deliveredReal = 0;     // gt=1761600000  thời điểm thực tế giao xong (giây)
+    long long arrivedReal = 0;       // gd=1761599000  thời điểm shipper bấm "Đã giao tới" (giây)
+    int disputes = 0;                // tc=1           số lần người nhận báo chưa nhận được hàng
+    std::string receivedBy;          // nn=khach       ai xác nhận đã nhận hàng (khach | nguoi_nhan | tu_dong | tên quản trị viên)
     bool codRecorded = false;        // cu=1           đã ghi nhận tiền thu hộ vào sổ COD
     int address = 0;                 // dc=3           mã địa chỉ trong sổ địa chỉ
     // Khai giá & bảo hiểm, kích thước, người trả cước (tuỳ chọn):
@@ -72,9 +75,10 @@ struct OrderRecord {
     bool receiverPays = false;       // tra=1          người nhận trả cước
     long long returnFee = 0;         // hoan=9000      phí hoàn hàng đã tính (chỉ trong orders_live.txt)
     long long closedAt = 0;          // xong=1761600000 lúc hoàn kho / huỷ (giây, chỉ trong orders_live.txt)
+    std::string category;            // loai=devo      loại hàng: tailieu thucpham quanao dientu devo khac
 };
 const long long MAX_COD = 50000000;   // thu hộ tối đa 50 triệu đồng / đơn
-bool validPhone(const std::string& s);  // 10 chữ số, bắt đầu bằng 0
+bool validPhone(const std::string& s);  // bắt đầu bằng 0, 10–11 chữ số
 
 namespace FileIO {
 

@@ -9,7 +9,7 @@
 #include <sstream>
 
 bool validPhone(const std::string& s) {
-    return s.size() == 10 && s[0] == '0' && s.find_first_not_of("0123456789") == std::string::npos;
+    return (s.size() == 10 || s.size() == 11) && s[0] == '0' && s.find_first_not_of("0123456789") == std::string::npos;
 }
 
 namespace FileIO {
@@ -290,7 +290,7 @@ bool parseOrders(const std::vector<Line>& lines, std::vector<OrderRecord>& order
             } else if (key == "sdt") {
                 o.phone = val;
                 if (!validPhone(o.phone)) {
-                    error = at(l) + "sdt= phai gom 10 chu so, bat dau bang 0";
+                    error = at(l) + "sdt= phai bat dau bang 0 va gom 10-11 chu so";
                     return false;
                 }
             } else if (key == "kh") {
@@ -329,7 +329,7 @@ bool parseOrders(const std::vector<Line>& lines, std::vector<OrderRecord>& order
                 }
                 o.deliveryCode = val;
             } else if (key == "tt") {
-                if (!number(n, 7)) return false;
+                if (!number(n, 8)) return false;
                 o.status = static_cast<int>(n);
             } else if (key == "sh") {
                 o.shipperName = unscore(val);
@@ -357,6 +357,14 @@ bool parseOrders(const std::vector<Line>& lines, std::vector<OrderRecord>& order
             } else if (key == "gt") {
                 if (!number(n, 9999999999LL)) return false;
                 o.deliveredReal = n;
+            } else if (key == "gd") {
+                if (!number(n, 9999999999LL)) return false;
+                o.arrivedReal = n;
+            } else if (key == "tc") {
+                if (!number(n, 1000)) return false;
+                o.disputes = static_cast<int>(n);
+            } else if (key == "nn") {
+                o.receivedBy = unscore(val);
             } else if (key == "cu") {
                 o.codRecorded = val == "1";
             } else if (key == "dc") {
@@ -381,6 +389,13 @@ bool parseOrders(const std::vector<Line>& lines, std::vector<OrderRecord>& order
             } else if (key == "xong") {
                 if (!number(n, 9999999999LL)) return false;
                 o.closedAt = n;
+            } else if (key == "loai") {
+                static const std::set<std::string> cats = {"tailieu", "thucpham", "quanao", "dientu", "devo", "khac"};
+                if (!cats.count(val)) {
+                    error = at(l) + "loai= phai la tailieu, thucpham, quanao, dientu, devo hoac khac";
+                    return false;
+                }
+                o.category = val;
             } else {
                 break;
             }
@@ -446,6 +461,9 @@ void writeOrders(std::ostream& out, const std::vector<OrderRecord>& orders) {
         if (o.cancelFee) out << " huy=" << o.cancelFee;
         if (!o.proofNote.empty()) out << " bc=" << score(o.proofNote);
         if (o.deliveredReal) out << " gt=" << o.deliveredReal;
+        if (o.arrivedReal) out << " gd=" << o.arrivedReal;
+        if (o.disputes) out << " tc=" << o.disputes;
+        if (!o.receivedBy.empty()) out << " nn=" << score(o.receivedBy);
         if (o.codRecorded) out << " cu=1";
         if (o.address) out << " dc=" << o.address;
         if (o.declaredValue) out << " gtri=" << o.declaredValue;
@@ -454,14 +472,15 @@ void writeOrders(std::ostream& out, const std::vector<OrderRecord>& orders) {
         if (o.receiverPays) out << " tra=1";
         if (o.returnFee) out << " hoan=" << o.returnFee;
         if (o.closedAt) out << " xong=" << o.closedAt;
+        if (!o.category.empty()) out << " loai=" << o.category;
         // '#' trong ghi chú sẽ bị hiểu là chú thích khi đọc lại -> thay bằng '-'
         std::string note = o.note;
         for (char& c : note) if (c == '#' || c == '\n' || c == '\r') c = '-';
         {
             // ghi chú bắt đầu bằng một khoá nghiệp vụ ("kh=...") sẽ bị đọc nhầm thành trường -> thêm '-' phía trước
             static const std::set<std::string> keys = {"cod", "sdt", "nhan", "kh", "ma", "ck", "tv", "gia", "ngay", "tao", "xn",
-                                                       "tt", "sh", "eta", "gx", "lan", "ly", "huy", "bc", "gt", "cu", "dc",
-                                                       "gtri", "bh", "kt", "tra", "hoan", "xong"};
+                                                       "tt", "sh", "eta", "gx", "lan", "ly", "huy", "bc", "gt", "gd", "tc", "nn", "cu", "dc",
+                                                       "gtri", "bh", "kt", "tra", "hoan", "xong", "loai"};
             size_t eq = note.find('=');
             size_t sp = note.find(' ');
             if (eq != std::string::npos && (sp == std::string::npos || eq < sp) && keys.count(note.substr(0, eq))) note = "-" + note;

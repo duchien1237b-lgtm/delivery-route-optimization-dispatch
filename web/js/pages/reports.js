@@ -11,7 +11,7 @@ let rtab = 'shipper', moreCols = false;   // mục chi tiết đang xem; có hi�
 const GROUPS = [
   { key: 'ontime', label: 'Đúng hạn', color: 'var(--go)', test: (o) => o.status === 2 && !o.late },
   { key: 'late', label: 'Trễ', color: 'var(--jam)', test: (o) => o.status === 2 && o.late },
-  { key: 'live', label: 'Đang giao', color: 'var(--road)', test: (o) => o.status === 1 },
+  { key: 'live', label: 'Đang giao', color: 'var(--road)', test: (o) => o.status === 1 || o.status === 8 },
   { key: 'failed', label: 'Thất bại', color: 'var(--stop)', test: (o) => o.status === 3 },
   { key: 'pending', label: 'Chờ giao', color: 'var(--line)', test: (o) => o.status === 0 },
   { key: 'returned', label: 'Hoàn kho', color: 'var(--violet)', test: (o) => o.status === 5 },

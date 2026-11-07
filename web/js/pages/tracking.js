@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { escapeHtml } from '../store.js';
 import { $, fmt, liveClock, tripPosition, guard, segmented, bindSegmented, toast, hhmm, getShiftStart, statusChip, ROUTE_COLORS, trafficEdgeStyles, rushLevel, TRAFFIC_LEVELS, avatar, showModal, askReason } from '../ui.js';
 import { printTrips } from '../print.js';
+import { directionsUrl, fmtRoute } from '../gmaps.js';
 
 let ctx, root;
 let t = 0;               // phút mô phỏng tính từ đầu ca
@@ -41,7 +42,7 @@ function positionOf(trip, time) {
     if (time < T[i]) {  // đang chạy giữa nút i-1 và i
       const a = at(i - 1), b = at(i), d0 = depart(i - 1);
       const f = T[i] > d0 ? Math.min(1, Math.max(0, (time - d0) / (T[i] - d0))) : 1;
-      return { lat: a.x + (b.x - a.x) * f, lon: a.y + (b.y - a.y) * f, index: i - 1, state: 'drive', next: i };
+      return { lat: a.x + (b.x - a.x) * f, lon: a.y + (b.y - a.y) * f, index: i - 1, state: 'drive', next: i, along: { nodes: P, i: i - 1, f, vehicle: trip.vehicleName } };
     }
     if (time < depart(i)) return { ...ll(at(i)), index: i, state: 'serve' };
   }
@@ -114,10 +115,11 @@ function drawMap() {
   trips().forEach((tr, i) => {
     const color = colorOf(tr, i);
     const pos = positionOf(tr, t);
-    if (tr.approach && tr.approach.length > 1) paths.push({ nodes: tr.approach, color, width: 3, opacity: 0.6, dash: '6 6', animate: false });
-    paths.push({ nodes: tr.path, color, width: 4, opacity: tr.accepted === false ? 0.2 : 0.35, animate: false });
-    if (pos.index > 0) paths.push({ nodes: tr.path.slice(0, pos.index + 1), color, width: 6, animate: false, arrows: true });
-    markers.push({ lat: pos.lat, lon: pos.lon, color, label: initial(tr.name), title: tr.name });
+    const veh = tr.vehicleName;   // geo: vẽ theo đường thật của Google khi nền Google đang bật
+    if (tr.approach && tr.approach.length > 1) paths.push({ nodes: tr.approach, color, width: 3, opacity: 0.6, dash: '6 6', animate: false, geo: true, vehicle: veh });
+    paths.push({ nodes: tr.path, color, width: 4, opacity: tr.accepted === false ? 0.2 : 0.35, animate: false, geo: true, vehicle: veh });
+    if (pos.index > 0) paths.push({ nodes: tr.path.slice(0, pos.index + 1), color, width: 6, animate: false, arrows: true, geo: { nodes: tr.path, from: 0, vehicle: veh } });
+    markers.push({ lat: pos.lat, lon: pos.lon, along: pos.along, color, label: initial(tr.name), title: tr.name });
     tr.stops.forEach((s, j) => {
       const o = ob.get(s.order) || {};
       const badge = o.status === 2 ? '✓' : o.status === 3 ? '✕' : o.status === 5 ? '↩' : String(j + 1);
@@ -143,10 +145,30 @@ function drawMap() {
   if (!playing || !drawMap.legendSet) { map.setLegend(legend); drawMap.legendSet = true; }
 }
 
+// Mở cả chuyến (kho rồi các điểm giao theo thứ tự) trong Google Maps
+function gmapsLink(tr) {
+  const ids = [tr.path[0], ...tr.stops.map((s) => s.node)];
+  const url = directionsUrl(ids.map((id) => ctx.store.nodesById.get(id)), { vehicle: tr.vehicleName });
+  return url ? `<a class="btn small ghost" href="${url}" target="_blank" rel="noopener noreferrer" title="Mở chuyến này trong Google Maps">Google Maps</a>` : '';
+}
+
+// Khoảng cách / thời gian Google ước tính khi đi đúng lộ trình của chuyến trên phố thật (chỉ khi nền Google đang bật)
+function fillGoogleStats() {
+  if (!root) return;
+  const geo = ctx.map.geo;
+  for (const el of root.querySelectorAll('[data-gtrip]')) {
+    const tr = trips().find((x) => String(x.id) === el.dataset.gtrip);
+    const coords = tr && tr.path.map((id) => ctx.store.nodesById.get(id)).map((n) => (n ? [n.x, n.y] : null));
+    const e = geo && coords && !coords.some((c) => !c) ? geo.peek(coords, tr.vehicleName) : null;
+    el.hidden = !e;
+    if (e) el.innerHTML = `<span class="chip ok">${geo.label}</span> đi đúng lộ trình trên đường thật: <b>${fmtRoute(e)}</b>`;
+  }
+}
+
 function tripStatus(tr) {
   const pos = positionOf(tr, t);
   const nodes = ctx.store.nodesById;
-  if (tr.accepted === false) return `Đang mời ${escapeHtml(tr.name)}${tr.offerLeft != null ? `, còn ${Math.round(tr.offerLeft)} giây để nhận` : ''}`;
+  if (tr.accepted === false) return `Chờ ${escapeHtml(tr.name)} nhận chuyến`;
   if (pos.state === 'approach') return `Đang chạy tới kho lấy hàng, tới nơi lúc ${fmt.clock(tr.approachTimes[tr.approachTimes.length - 1])}`;
   if (pos.state === 'wait') return `Xuất phát lúc ${fmt.clock(tr.pathTimes[0])}`;
   const stopped = tr.note && tr.note.includes('nghỉ');
@@ -243,6 +265,8 @@ function renderTrips() {
       <header>${avatar(tr.name, color, tr.vehicleName, 'sm')}<b>${escapeHtml(tr.name)}</b>${tr.shipper >= 0 && !(st.shippers[tr.shipper] || {}).absent && positionOf(tr, t).state !== 'done' ? `<button class="btn small ghost staff-only" data-absent="${tr.shipper}" title="Shipper nghỉ đột xuất: dừng chuyến, đơn chưa giao về hàng chờ">Báo nghỉ</button>` : ''}${tr.accepted === false ? `<button class="btn small ghost staff-only" data-recall="${tr.id}" title="Shipper chưa nhận chuyến: thu hồi để phân công lại">Thu hồi</button>` : ''}<button class="btn small ghost" data-print="${tr.id}" title="In phiếu giao">In phiếu</button></header>
       ${tr.accepted === false ? '<div class="notice warn" style="margin:4px 0 8px">Chờ shipper nhận chuyến</div>' : ''}
       ${tr.note ? `<div class="notice ${tr.reroutes ? 'info' : 'warn'}" style="margin:4px 0 8px">${escapeHtml(tr.note)}</div>` : ''}
+      <div class="g-stat" data-gtrip="${tr.id}" hidden></div>
+      <div class="g-link">${gmapsLink(tr)}</div>
       <div class="meta">${escapeHtml(tr.vehicleName)}, ${fmt.num(tr.load)}${tr.capacity ? `/${fmt.num(tr.capacity)}` : ''} kg, ${fmt.km(tr.km)}, ${fmt.vnd(tr.cost)}</div>
       <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${n}" aria-valuenow="${d}"><i style="width:${n ? (d / n) * 100 : 0}%;background:${color}"></i></div>
       <div class="trip-status split"><span>${tripStatus(tr)}</span><span class="muted" style="font-weight:400;font-size:12px">${d}/${n} điểm</span></div>
@@ -252,6 +276,7 @@ function renderTrips() {
   if (html === box._last) return;   // không đổi gì: giữ nguyên DOM để nút bấm không bị dựng lại
   box._last = html;
   box.innerHTML = html;
+  fillGoogleStats();
   box.querySelectorAll('[data-fail]').forEach((b) => b.addEventListener('click', () => askFailReason(Number(b.dataset.fail))));
   box.querySelectorAll('[data-cancel]').forEach((b) => b.addEventListener('click', () => {
     if (!confirm(`Khách huỷ đơn ${b.dataset.cancel}?`)) return;
@@ -339,10 +364,12 @@ export default {
     drawMap.legendSet = false;
     drawMap.trafficBucket = null;
     ctx.map.setHint(null);
+    document.addEventListener('geo:update', fillGoogleStats);
     render();
     if (trips().length) ctx.map.ensureVisible(trips().flatMap((tr) => tr.path));
   },
   unmount() {
+    document.removeEventListener('geo:update', fillGoogleStats);
     pause();
     if (raf) cancelAnimationFrame(raf);
     raf = null;

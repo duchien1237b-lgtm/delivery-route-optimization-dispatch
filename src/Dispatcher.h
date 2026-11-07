@@ -37,9 +37,10 @@
 // CANCELLED: khách huỷ; RETURNED: giao thất bại đủ MAX_ATTEMPTS lần -> hoàn hàng về kho
 // CREATED: khách vừa tạo, chờ quản trị viên xác nhận (khi tắt ghép tự động); DISPATCHED: đã phân công vào một chuyến, chờ shipper nhận chuyến
 // (ASSIGNED = shipper đã nhận chuyến và đang giao). Giá trị 0..5 giữ nguyên để tương thích dữ liệu cũ.
-enum OrderStatus { PENDING = 0, ASSIGNED = 1, DELIVERED = 2, FAILED = 3, CANCELLED = 4, RETURNED = 5, CREATED = 6, DISPATCHED = 7 };
-const int ORDER_STATUS_COUNT = 8;
-// "Chờ giao", "Đang giao", "Đã giao", "Thất bại", "Đã huỷ", "Hoàn kho", "Mới", "Đã phân công"
+// ARRIVED: shipper đã bấm "Đã giao tới", chờ người nhận xác nhận "Đã nhận hàng" (hoặc tự hoàn tất sau một thời gian).
+enum OrderStatus { PENDING = 0, ASSIGNED = 1, DELIVERED = 2, FAILED = 3, CANCELLED = 4, RETURNED = 5, CREATED = 6, DISPATCHED = 7, ARRIVED = 8 };
+const int ORDER_STATUS_COUNT = 9;
+// "Chờ giao", "Đang giao", "Đã giao", "Thất bại", "Đã huỷ", "Hoàn kho", "Mới", "Đã phân công", "Chờ xác nhận"
 const char* orderStatusName(int s);
 const int MAX_ATTEMPTS = 2;          // số lần giao thử tối đa trước khi hoàn hàng
 
@@ -74,6 +75,9 @@ struct Order {
     long long cancelFee = 0;   // phí huỷ đã tính
     std::string proofNote;     // ghi chú / ảnh bằng chứng khi giao
     long long deliveredReal = 0;   // giây (đồng hồ thật) lúc giao xong
+    long long arrivedReal = 0;     // giây (đồng hồ thật) lúc shipper bấm "Đã giao tới" (chờ người nhận xác nhận)
+    int disputes = 0;              // số lần người nhận báo "chưa nhận được hàng"
+    std::string receivedBy;        // "khách", "người nhận" (tra cứu công khai), "tự động" hoặc tên quản trị viên: ai xác nhận nhận hàng
     bool codRecorded = false;  // tiền thu hộ đã vào sổ COD
     int address = 0;           // mã địa chỉ trong sổ địa chỉ (0 = nhập tay)
     // Khai giá, kích thước, người trả cước, phí hoàn (xem Billing.h)
@@ -82,10 +86,12 @@ struct Order {
     bool receiverPays = false;
     long long returnFee = 0;
     long long closedAt = 0;    // giây (đồng hồ thật) lúc đơn hoàn kho / bị huỷ
+    std::string category;      // loại hàng (Commerce::categoryName), rỗng = không khai
     // Ghép đơn tự động (chỉ trong bộ nhớ, không lưu vào orders.txt)
     std::vector<int> tried;    // chỉ số shipper đã từ chối / bỏ lỡ lời mời của đơn này (không mời lại)
     long long searchSince = 0; // giây (đồng hồ thật) đơn bắt đầu chờ ghép shipper
     long long noShipperAt = 0; // > 0: giây lúc hệ thống hết shipper để mời (khách đã được báo)
+    bool opened = false;       // đơn đã được báo tới các shipper đủ điều kiện trên bảng "Đơn chờ nhận" (ai bấm nhận trước được đơn)
 
     Order() = default;
     Order(const OrderRecord& r);  // chuyển từ bản ghi đọc file (FileIO)

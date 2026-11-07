@@ -22,9 +22,10 @@ Order::Order(const OrderRecord& r)
       promo(r.promo), promoDiscount(r.promoDiscount), loyaltyDiscount(r.loyaltyDiscount), gross(r.gross),
       createdAt(r.createdAt), createdBy(r.createdBy), deliveryCode(r.deliveryCode), status(r.status),
       eta(r.eta), deliveredAt(r.deliveredAt), attempts(r.attempts), failReason(r.failReason), cancelFee(r.cancelFee),
-      proofNote(r.proofNote), deliveredReal(r.deliveredReal), codRecorded(r.codRecorded), address(r.address),
+      proofNote(r.proofNote), deliveredReal(r.deliveredReal), arrivedReal(r.arrivedReal), disputes(r.disputes), receivedBy(r.receivedBy),
+      codRecorded(r.codRecorded), address(r.address),
       declaredValue(r.declaredValue), insuranceFee(r.insuranceFee), dimL(r.dimL), dimW(r.dimW), dimH(r.dimH),
-      receiverPays(r.receiverPays), returnFee(r.returnFee), closedAt(r.closedAt) {}
+      receiverPays(r.receiverPays), returnFee(r.returnFee), closedAt(r.closedAt), category(r.category) {}
 
 OrderRecord Order::toRecord() const {
     OrderRecord r;
@@ -53,6 +54,9 @@ OrderRecord Order::toRecord() const {
     r.cancelFee = cancelFee;
     r.proofNote = proofNote;
     r.deliveredReal = deliveredReal;
+    r.arrivedReal = arrivedReal;
+    r.disputes = disputes;
+    r.receivedBy = receivedBy;
     r.codRecorded = codRecorded;
     r.address = address;
     r.declaredValue = declaredValue;
@@ -63,6 +67,7 @@ OrderRecord Order::toRecord() const {
     r.receiverPays = receiverPays;
     r.returnFee = returnFee;
     r.closedAt = closedAt;
+    r.category = category;
     return r;
 }
 
@@ -92,6 +97,7 @@ const char* orderStatusName(int s) {
         case RETURNED: return "Hoàn kho";
         case CREATED: return "Mới";
         case DISPATCHED: return "Đã phân công";
+        case ARRIVED: return "Chờ xác nhận";
         default: return "Chờ giao";
     }
 }

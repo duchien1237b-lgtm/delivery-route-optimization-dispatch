@@ -9,21 +9,31 @@ import {
   setFieldError, clearFieldErrors, showFieldErrors, EVENT_LABEL,
 } from './ui.js';
 
-const DEMO = [
-  { u: 'admin', p: 'admin123', role: 'Quản trị viên' },
-  { u: 'tuan', p: 'shipper123', role: 'Shipper' },
-  { u: 'anphat', p: 'khach123', role: 'Khách hàng' },
-  { u: 'khachvip', p: 'HuongViet@2026', role: 'Khách VIP' },
-  { u: 'cuahangmai', p: 'Mai@2026', role: 'Khách (chủ cửa hàng)' },
-  { u: 'ctv_hung', p: 'Hung@2026', role: 'Shipper chờ duyệt' },
+// Không còn nút "tài khoản dùng thử": người dùng tự nhập tài khoản; hệ thống đưa vào đúng trang của vai trò sau khi đăng nhập.
+const ROLE_HINTS = [
+  { icon: '<path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>', name: 'Khách hàng', text: 'đặt đơn, theo dõi, ví' },
+  { icon: '<circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M6 17h2l3-7h4l3 7M9 10H6"/>', name: 'Shipper', text: 'nhận đơn, giao hàng' },
+  { icon: '<path d="M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/>', name: 'Quản trị', text: 'điều phối, đối soát' },
 ];
+const FEATURES = [
+  { icon: '<circle cx="12" cy="10" r="3"/><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/>', b: 'Nhận đơn tự do', s: 'Shipper nào bấm nhận trước thì giao đơn' },
+  { icon: '<path d="M3 12h4l3-8 4 16 3-8h4"/>', b: 'Theo dõi trực tiếp', s: 'Xe chạy trên bản đồ, người nhận bấm xác nhận khi nhận hàng' },
+  { icon: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>', b: 'Đối soát minh bạch', s: 'Thu hộ, ví, sao kê xuất CSV' },
+];
+const svgIcon = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 const BRAND_SVG = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 22.5 14 13l5 6 4.5-8.5" class="brand-route"/><circle cx="9" cy="22.5" r="2.6" class="brand-dot"/><circle cx="23.5" cy="10.5" r="2.6" class="brand-dot"/></svg>';
 
 let el, onLogin, info = null, view = 'login', tool = 'quote', flash = null, resetEmail = '', lastUser = '';
 
+// Liên kết người gửi chia sẻ cho người nhận: ?don=112 mở sẵn thẻ *Tra cứu đơn* với mã đơn đã điền
+let trackPrefill = '';
 export function initAuth(opts) {
   el = $('#login');
   onLogin = opts.onLogin;
+  try {
+    const d = new URLSearchParams(location.search).get('don');
+    if (d && /^\d{1,9}$/.test(d)) { trackPrefill = d; tool = 'track'; }
+  } catch { /* trình duyệt cũ */ }
 }
 
 export async function showAuth(message, kind = 'error') {
@@ -71,19 +81,20 @@ function render() {
       <nav class="guest-nav" aria-label="Khách vãng lai">
         <button type="button" class="link" data-tool="quote">Báo giá</button>
         <button type="button" class="link" data-tool="track">Tra cứu đơn</button>
-        <button type="button" class="btn small ghost" data-view="login">Đăng nhập</button>
+        <button type="button" class="btn small ghost nav-login" data-view="login">Đăng nhập</button>
         <button type="button" class="btn small primary" data-view="register">Đăng ký</button>
       </nav>
     </header>
     <div class="guest-grid">
       <section class="guest-hero" aria-labelledby="hero-title">
         <p class="eyebrow">Giao hàng nội thành trong ngày</p>
-        <h1 id="hero-title">Đặt đơn một phút,<br>theo dõi tới tận cửa.</h1>
-        <p class="lead">Cước tính theo đường ngắn nhất từ kho, shipper xác nhận giao bằng mã 4 số của người nhận, tiền thu hộ được đối soát minh bạch.</p>
+        <h1 id="hero-title">Đặt đơn một phút,<br><span class="grad-text">theo dõi tới tận cửa.</span></h1>
+        <p class="lead">Cước tính theo đường ngắn nhất từ kho, shipper nào bấm nhận trước thì giao, người nhận xác nhận lại khi nhận hàng, tiền thu hộ được đối soát minh bạch.</p>
+        <ul class="hero-features">${FEATURES.map((f) => `<li><span class="hf-ic">${svgIcon(f.icon)}</span><span><b>${f.b}</b><small>${f.s}</small></span></li>`).join('')}</ul>
         <div class="hero-stats">
           <span><b>${info ? info.nodes.length : '–'}</b> điểm giao</span>
           <span><b>${info ? info.shippers : '–'}</b> shipper</span>
-          <span><b>${info ? info.delivered : '–'}</b> đơn đã giao</span>
+          ${info && info.delivered ? `<span><b>${info.delivered}</b> đơn đã giao</span>` : '<span><b>24/7</b> đặt đơn trực tuyến</span>'}
         </div>
         <div class="guest-tool" id="guest-tool">
           <div class="tabs" role="tablist">
@@ -96,6 +107,7 @@ function render() {
       </section>
       <section class="auth-card" aria-live="polite">${cardHtml()}</section>
     </div>
+    <footer class="guest-foot"><span>© ${new Date().getFullYear()} Giao Nhanh 08 · Đồ án Cấu trúc dữ liệu &amp; Giải thuật</span><span>Bản đồ © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a></span></footer>
   </div>`;
   bind();
 }
@@ -116,9 +128,10 @@ function quoteHtml() {
 function trackHtml() {
   return `<form id="g-track" class="g-form" novalidate>
     <div class="row">
-      <label class="field"><span>Mã đơn</span><input name="code" inputmode="numeric" maxlength="9" placeholder="vd: 101" required></label>
-      <label class="field"><span>SĐT người nhận</span><input name="phone" type="tel" inputmode="numeric" maxlength="13" placeholder="09xxxxxxxx" required></label>
+      <label class="field"><span>Mã đơn</span><input name="code" inputmode="numeric" maxlength="9" placeholder="vd: 101" value="${escapeHtml(trackPrefill)}" required></label>
+      <label class="field"><span>SĐT người nhận</span><input name="phone" type="tel" inputmode="numeric" maxlength="13" placeholder="0xxxxxxxxx" required></label>
     </div>
+    <p class="muted small" style="margin:-2px 0 10px">Bạn là người nhận? Nhập mã đơn và số điện thoại của bạn để xem đơn và bấm <b>Đã nhận hàng</b> khi shipper giao tới (không cần tài khoản).</p>
     <button class="btn primary">Tra cứu</button>
     <div id="g-track-out" class="g-out" aria-live="polite"></div>
   </form>`;
@@ -157,8 +170,14 @@ function bindTrack() {
         const r = await api.get('track', { code: f.code.value.trim(), phone: normalizePhone(f.phone.value) });
         const o = r.order;
         out.innerHTML = `<div class="track-box"><header><b>Đơn ${o.id}</b><span class="chip ${o.status === 2 ? 'ok' : o.status === 4 || o.status === 5 ? 'warn' : 'blue'}">${escapeHtml(o.statusName)}</span></header>
-          <p>Giao tới ${escapeHtml(o.destination)}${o.urgent ? ' · hoả tốc' : ''}${o.carrier ? ` · shipper ${escapeHtml(o.carrier)}` : ''}${o.cod ? ` · thu hộ ${money(o.cod)}` : ''}</p>
+          <p>Giao tới ${escapeHtml(o.destination)}${o.urgent ? ' · hoả tốc' : ''}${o.carrier ? ` · shipper ${escapeHtml(o.carrier)}` : ''}${o.collect && o.status !== 2 ? ` · cần trả shipper ${money(o.collect)}` : ''}</p>
+          ${o.canConfirm ? `<div class="code-box" style="margin:10px 0"><span>Shipper báo đã giao tới</span><small>Nếu bạn đã nhận được hàng, hãy bấm xác nhận. Nếu chưa, bấm “Chưa nhận được”.${o.autoConfirmAt ? ' Đơn tự hoàn tất nếu bạn không phản hồi.' : ''}</small><div class="actions" style="margin-top:8px"><button type="button" class="btn primary" data-tc="receive">Đã nhận hàng</button>${o.canDispute ? '<button type="button" class="btn ghost danger" data-tc="dispute">Chưa nhận được</button>' : ''}</div></div>` : ''}
           <ol class="steps">${r.steps.map((s) => `<li>${escapeHtml(EVENT_LABEL[s.type] || s.type)}${s.t != null ? ` <small>phút ${Math.round(s.t)} của ca</small>` : ''}</li>`).join('')}</ol></div>`;
+        for (const b of out.querySelectorAll('[data-tc]')) b.addEventListener('click', () => guard(async () => {
+          const res = await api.post('track/confirm', { code: f.code.value.trim(), phone: normalizePhone(f.phone.value), action: b.dataset.tc });
+          toast(res.message);
+          f.requestSubmit();
+        }, b));
       } catch (err) { out.innerHTML = `<p class="field-err" role="alert">${escapeHtml(err.message)}</p>`; }
     }, f.querySelector('button'));
   });
@@ -183,11 +202,11 @@ function loginHtml() {
     <p class="login-sub">Dùng tên đăng nhập, email hoặc số điện thoại.</p>
     ${flashHtml()}
     <label class="field"><span>Tài khoản</span><input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" value="${escapeHtml(lastUser)}" placeholder="tên đăng nhập, email hoặc SĐT" required></label>
-    <div class="field"><span class="field-row"><label for="login-pass">Mật khẩu</label><button type="button" class="link" data-view="forgot">Quên mật khẩu?</button></span>${passwordInput('password', { id: 'login-pass' })}</div>
+    <div class="field"><span class="field-row"><label for="login-pass">Mật khẩu</label><button type="button" class="link" data-view="forgot">Quên mật khẩu?</button></span>${passwordInput('password', { id: 'login-pass' })}<small class="caps-warn" id="caps-warn" hidden>Đang bật Caps Lock</small></div>
     <label class="check"><input type="checkbox" name="remember"> Ghi nhớ đăng nhập trên máy này (30 ngày)</label>
     <button class="btn primary block-btn" id="login-btn">Đăng nhập</button>
     <p class="auth-switch">Chưa có tài khoản? <button type="button" class="link" data-view="register">Đăng ký ngay</button></p>
-    ${info && info.demo ? `<div class="login-demo"><span>Tài khoản dùng thử</span><div class="demo-list">${DEMO.map((d) => `<button type="button" data-demo="${d.u}" data-pass="${escapeHtml(d.p)}"><b>${d.role}</b><small>${d.u}</small></button>`).join('')}</div></div>` : ''}
+    <div class="role-hint"><span>Một trang đăng nhập cho mọi vai trò</span><ul>${ROLE_HINTS.map((r) => `<li>${svgIcon(r.icon)}<b>${r.name}</b><small>${r.text}</small></li>`).join('')}</ul></div>
   </form>`;
 }
 
@@ -204,7 +223,7 @@ function registerHtml() {
     <label class="field"><span>Tên đăng nhập</span><input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" placeholder="vd: nguyenvanan" required><small class="hint">3–20 ký tự: chữ thường không dấu, số, dấu _ hoặc .</small></label>
     <div class="row">
       <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" maxlength="80" placeholder="ban@example.com" required></label>
-      <label class="field"><span>Số điện thoại</span><input name="phone" type="tel" inputmode="numeric" autocomplete="tel" maxlength="13" placeholder="09xxxxxxxx" required></label>
+      <label class="field"><span>Số điện thoại</span><input name="phone" type="tel" inputmode="numeric" autocomplete="tel" maxlength="13" placeholder="0xxxxxxxxx" required></label>
     </div>
     <div class="field"><span><label for="reg-pass">Mật khẩu</label></span>${passwordInput('password', { id: 'reg-pass', autocomplete: 'new-password' })}<ul class="pw-rules" id="reg-rules" aria-label="Điều kiện mật khẩu"></ul></div>
     <div class="field"><span><label for="reg-confirm">Nhập lại mật khẩu</label></span>${passwordInput('confirm', { id: 'reg-confirm', autocomplete: 'new-password' })}</div>
@@ -297,9 +316,10 @@ function bindLogin() {
       }
     }, $('#login-btn', el));
   });
-  for (const b of f.querySelectorAll('[data-demo]')) {
-    b.addEventListener('click', () => { f.username.value = b.dataset.demo; f.password.value = b.dataset.pass; f.requestSubmit(); });
-  }
+  // Cảnh báo Caps Lock khi gõ mật khẩu (lý do phổ biến nhất của "sai mật khẩu")
+  const pw = f.password, capsEl = $('#caps-warn', el);
+  const caps = (e) => { if (capsEl && e.getModifierState) capsEl.hidden = !e.getModifierState('CapsLock'); };
+  if (pw) { pw.addEventListener('keydown', caps); pw.addEventListener('keyup', caps); pw.addEventListener('blur', () => { if (capsEl) capsEl.hidden = true; }); }
 }
 
 function checkRegister(f, only) {
@@ -344,7 +364,7 @@ function bindRegister() {
     <li>Bạn chịu trách nhiệm về thông tin hàng hoá, người nhận và tiền thu hộ khai báo trên đơn.</li>
     <li>Không gửi hàng cấm, hàng nguy hiểm theo quy định của pháp luật.</li>
     <li>Đơn đã phân công cho shipper bị huỷ sẽ tính phí huỷ theo biểu phí công bố (20% cước khi đã phân công, 50% khi đang giao).</li>
-    <li>Shipper phải nhập đúng mã 4 số của người nhận khi giao và nộp đủ tiền thu hộ cuối ca.</li>
+    <li>Shipper bấm “Đã giao tới”, người nhận xác nhận lại; shipper phải nộp đủ tiền thu hộ cuối ca.</li>
     <li>Thông tin cá nhân chỉ dùng để giao hàng và liên hệ; mật khẩu được lưu dưới dạng băm có muối.</li></ol>`));
   f.addEventListener('submit', (e) => {
     e.preventDefault();

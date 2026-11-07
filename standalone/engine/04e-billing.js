@@ -56,7 +56,7 @@ class CustomerLedger {
       } catch {
         t = null;
       }
-      if (!t || t.kind !== "payout" && t.kind !== "collect" && t.kind !== "comp" || t.amount <= 0 || !t.customer)
+      if (!t || t.kind !== "payout" && t.kind !== "collect" && t.kind !== "comp" && t.kind !== "tip" || t.amount <= 0 || !t.customer)
         throw new Error(`So khach hang dong ${no}: so lieu khong hop le`);
       maxId = Math.max(maxId, t.id);
       items.push(t);
@@ -65,7 +65,7 @@ class CustomerLedger {
     this.next = maxId + 1;
   }
   toText() {
-    let o = "# So giao dich khach hang. T id loai(payout|collect|comp) khach so_tien luc(giay) nguoi_ghi ma_don ma_khieu_nai kenh tham_chieu ghi_chu\n";
+    let o = "# So giao dich khach hang. T id loai(payout|collect|comp|tip) khach so_tien luc(giay) nguoi_ghi ma_don ma_khieu_nai kenh tham_chieu ghi_chu\n";
     for (const t of this.items)
       o += `T ${t.id} ${t.kind} ${encodeToken(t.customer)} ${t.amount} ${t.at} ${encodeToken(t.by)} ${t.order} ${t.complaint} ${encodeToken(t.method)} ${encodeToken(t.ref)} ${encodeLine(t.note)}\n`;
     return o;
@@ -73,17 +73,17 @@ class CustomerLedger {
   // { error, id }
   add(tx0) {
     const tx = { order: 0, complaint: 0, method: "", ref: "", note: "", by: "", ...tx0 };
-    if (tx.kind !== "payout" && tx.kind !== "collect" && tx.kind !== "comp")
+    if (tx.kind !== "payout" && tx.kind !== "collect" && tx.kind !== "comp" && tx.kind !== "tip")
       return { error: "Loại giao dịch không hợp lệ", id: 0 };
     if (tx.amount <= 0 || tx.amount > 1e9)
       return { error: "Số tiền phải lớn hơn 0", id: 0 };
     if (!tx.customer)
       return { error: "Thiếu khách hàng", id: 0 };
-    if (tx.kind === "comp")
+    if (tx.kind === "comp" || tx.kind === "tip")
       tx.method = "wallet";
     else if (tx.method !== "bank" && tx.method !== "cash")
       return { error: "Hãy chọn hình thức: chuyển khoản hoặc tiền mặt", id: 0 };
-    if (tx.kind !== "comp" && tx.method === "bank" && blen(tx.ref) < 3)
+    if (tx.kind !== "comp" && tx.kind !== "tip" && tx.method === "bank" && blen(tx.ref) < 3)
       return { error: "Chuyển khoản cần mã giao dịch ngân hàng", id: 0 };
     if (ulen(tx.ref) > 40)
       return { error: "Mã tham chiếu tối đa 40 ký tự", id: 0 };
@@ -97,6 +97,9 @@ class CustomerLedger {
   of(customer) {
     return this.items.filter((t) => t.customer === customer);
   }
+  tipOf(order) {
+    return this.items.find((t) => t.kind === "tip" && t.order === order) || null;
+  }
   ofComplaint(complaint) {
     return this.items.find((t) => t.kind === "comp" && t.complaint === complaint) || null;
   }
@@ -107,7 +110,7 @@ class CustomerLedger {
 
 // orders: [{id, status, cod, total, returnFee, cancelFee, receiverPays, at, codSettled}]
 function billingStatement(orders, txs) {
-  const s = { lines: [], balance: 0, pending: 0, available: 0, codTotal: 0, fees: 0, comps: 0, paidOut: 0, collected: 0 };
+  const s = { lines: [], balance: 0, pending: 0, available: 0, codTotal: 0, fees: 0, comps: 0, paidOut: 0, collected: 0, tips: 0 };
   const add = (at, kind, order, amount, pending, text) => {
     if (amount === 0)
       return;
@@ -136,6 +139,10 @@ function billingStatement(orders, txs) {
       l.amount = t.amount;
       l.text = `Bồi thường khiếu nại #${t.complaint}${t.note ? ": " + t.note : ""}`;
       s.comps += t.amount;
+    } else if (t.kind === "tip") {
+      l.amount = -t.amount;
+      l.text = `Tiền tip cho shipper ${t.ref} (đơn #${t.order})`;
+      s.tips += t.amount;
     } else if (t.kind === "payout") {
       l.amount = -t.amount;
       l.text = `${t.method === "bank" ? "Chuyển khoản" : "Trả tiền mặt"} cho khách ${vndShort(t.amount)}`;
@@ -145,7 +152,7 @@ function billingStatement(orders, txs) {
       l.text = `Khách nộp bù ${t.method === "bank" ? "(chuyển khoản)" : "(tiền mặt)"}`;
       s.collected += t.amount;
     }
-    if (t.note && t.kind !== "comp")
+    if (t.note && t.kind !== "comp" && t.kind !== "tip")
       l.text += ": " + t.note;
     s.lines.push(l);
   }

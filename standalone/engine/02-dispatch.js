@@ -73,7 +73,8 @@ var CANCELLED = 4;
 var RETURNED = 5;
 var CREATED = 6;
 var DISPATCHED = 7;
-var ORDER_STATUS_COUNT = 8;
+var ARRIVED = 8;
+var ORDER_STATUS_COUNT = 9;
 var MAX_ATTEMPTS = 2;
 var FAIL_ABSENT = 0;
 var FAIL_REFUSED = 2;
@@ -84,7 +85,7 @@ var FAIL_NAMES = ["Khách vắng nhà / không liên lạc được", "Sai hoặ
 var failReasonName = (r) => FAIL_NAMES[r] ?? "";
 var failReasonReturns = (r) => r === FAIL_REFUSED || r === FAIL_DAMAGED;
 function orderStatusName(s) {
-  return ["Chờ giao", "Đang giao", "Đã giao", "Thất bại", "Đã huỷ", "Hoàn kho", "Mới", "Đã phân công"][s] || "Chờ giao";
+  return ["Chờ giao", "Đang giao", "Đã giao", "Thất bại", "Đã huỷ", "Hoàn kho", "Mới", "Đã phân công", "Chờ xác nhận"][s] || "Chờ giao";
 }
 function higherPriority(a, b) {
   if (a.urgent !== b.urgent)

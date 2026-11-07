@@ -110,6 +110,10 @@ class Config {
     this.offerSeconds = 45;
     this.matchGiveUp = 10;
     this.clockSpeed = 0;
+    this.missLimit = 3;
+    this.codHoldLimit = 5000000;
+    this.tipMax = 200000;
+    this.autoConfirmMinutes = 30;
   }
   check() {
     const tiers = this.tiers;
@@ -152,6 +156,14 @@ class Config {
       return "Thời gian chờ shipper trước khi tự huỷ đơn phải từ 0 đến 240 phút (0 = không tự huỷ)";
     if (!(this.clockSpeed >= 0 && this.clockSpeed <= 120))
       return "Tốc độ giờ ca phải từ 0 đến 120 phút ca mỗi phút thật (0 = tắt)";
+    if (this.missLimit < 0 || this.missLimit > 20)
+      return "Số lần nhả đơn liên tiếp trước khi shipper tự tạm nghỉ phải từ 0 đến 20 (0 = tắt)";
+    if (this.codHoldLimit < 0 || this.codHoldLimit > 1e8)
+      return "Hạn mức tiền mặt shipper được giữ phải từ 0 đến 100.000.000 đ (0 = không chặn)";
+    if (this.tipMax < 0 || this.tipMax > 1e6 || this.tipMax % 1000 !== 0)
+      return "Tiền tip tối đa phải từ 0 đến 1.000.000 đ, bội số 1.000 đ (0 = tắt tip)";
+    if (this.autoConfirmMinutes < 0 || this.autoConfirmMinutes > 1440)
+      return "Thời gian chờ người nhận xác nhận phải từ 0 đến 1440 phút (0 = không tự hoàn tất)";
     return checkTariff(TARIFF);
   }
   toText() {
@@ -163,6 +175,7 @@ class Config {
     o += `cancel.dispatched ${n(this.cancelDispatched)}\ncancel.onRoute ${n(this.cancelOnRoute)}\nshipperShare ${n(this.shipperShare)}\nscoreAware ${this.scoreAware ? 1 : 0}\nmaxOpenOrders ${this.maxOpenOrders}\nautoDeliver ${this.autoDeliver ? 1 : 0}\n`;
     o += `ins.rate ${n(this.insRate)}\nins.threshold ${this.insThreshold}\nvol.divisor ${this.volDivisor}\ncomp.multiplier ${n(this.compMultiplier)}\ndebt.limit ${this.debtLimit}\n`;
     o += `match.auto ${this.autoMatch ? 1 : 0}\nmatch.offerSeconds ${this.offerSeconds}\nmatch.giveUp ${this.matchGiveUp}\nclock.speed ${n(this.clockSpeed)}\n`;
+    o += `match.missLimit ${this.missLimit}\ncod.holdLimit ${this.codHoldLimit}\ntip.max ${this.tipMax}\nreceive.autoMinutes ${this.autoConfirmMinutes}\n`;
     return o;
   }
   // Nạp cả biểu phí vào TARIFF. Ném Error nếu sai (cấu hình và biểu phí giữ nguyên).
@@ -209,6 +222,14 @@ class Config {
           next.matchGiveUp = cppStoll(a);
         else if (key === "clock.speed")
           next.clockSpeed = cppStod(a);
+        else if (key === "match.missLimit")
+          next.missLimit = cppStoll(a);
+        else if (key === "cod.holdLimit")
+          next.codHoldLimit = cppStoll(a);
+        else if (key === "tip.max")
+          next.tipMax = cppStoll(a);
+        else if (key === "receive.autoMinutes")
+          next.autoConfirmMinutes = cppStoll(a);
       } catch {
         throw new Error("Dong cau hinh khong hop le: " + raw);
       }
@@ -406,7 +427,7 @@ function checkAddressFields(a) {
   if (r < 2 || r > 60 || hasControl(a.recipient))
     return "Tên người nhận dài 2–60 ký tự";
   if (!validPhone(a.phone))
-    return "Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0";
+    return "Số điện thoại phải bắt đầu bằng số 0 và gồm 10–11 chữ số";
   if (ulen(a.detail) > 80 || hasControl(a.detail))
     return "Địa chỉ chi tiết tối đa 80 ký tự";
   return "";
@@ -648,4 +669,146 @@ function performanceScore(s, avgStars, ratingCount) {
   const declineRate = offered ? s.declines / offered : 0;
   const score = 100 * (0.5 * onTime + 0.3 * (rating / 5) + 0.2 * (1 - Math.min(1, declineRate * 2)));
   return Math.round(score * 10) / 10;
+}
+
+// ---------------------------------------------------------------- Loại hàng, trò chuyện trong đơn, shipper yêu thích / bị chặn (v12)
+var CATEGORIES = [["tailieu", "Tài liệu"], ["thucpham", "Thực phẩm"], ["quanao", "Quần áo"], ["dientu", "Điện tử"], ["devo", "Hàng dễ vỡ"], ["khac", "Khác"]];
+var categoryName = (code) => (CATEGORIES.find((c) => c[0] === code) || [0, ""])[1];
+var validCategory = (code) => categoryName(code) !== "";
+var MAX_CHAT_TEXT = 300, MAX_CHAT_PER_ORDER = 200, MAX_PREFS = 10;
+class ChatStore {
+  constructor() {
+    this.items = [];
+    this.next = 1;
+  }
+  loadText(text) {
+    const out = [];
+    let maxId = 0, no = 0;
+    for (const raw of meaningfulLines(text)) {
+      ++no;
+      const sp = splitColumns(raw, 6);
+      if (!sp || sp.cols[0] !== "M" || sp.cols[5].length !== 1)
+        throw new Error(`Tro chuyen dong ${no}: sai dinh dang`);
+      const c = sp.cols;
+      let m;
+      try {
+        m = { id: cppStoll(c[1]), order: cppStoll(c[2]), at: cppStoll(c[3]), from: decodeToken(c[4]), role: c[5], text: decodeLine(sp.rest) };
+      } catch {
+        throw new Error(`Tro chuyen dong ${no}: so khong hop le`);
+      }
+      maxId = Math.max(maxId, m.id);
+      out.push(m);
+    }
+    this.items = out;
+    this.next = maxId + 1;
+  }
+  toText() {
+    let o = "# Tro chuyen trong don: M id ma_don thoi_diem(giay) nguoi_gui vai_tro(C|S|A) noi_dung\n";
+    for (const m of this.items)
+      o += `M ${m.id} ${m.order} ${m.at} ${encodeToken(m.from)} ${m.role} ${encodeLine(m.text)}\n`;
+    return o;
+  }
+  add(m0) {
+    const m = { ...m0 };
+    m.text = String(m.text || "").replace(/[\n\r\t]/g, " ").replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "");
+    if (!m.text)
+      return { error: "Hãy nhập nội dung tin nhắn", id: 0 };
+    if (ulen(m.text) > MAX_CHAT_TEXT)
+      return { error: "Tin nhắn tối đa 300 ký tự", id: 0 };
+    if (hasControl(m.text))
+      return { error: "Tin nhắn có ký tự không hợp lệ", id: 0 };
+    if (m.role !== "C" && m.role !== "S" && m.role !== "A")
+      return { error: "Vai trò người gửi không hợp lệ", id: 0 };
+    if (this.count(m.order) >= MAX_CHAT_PER_ORDER)
+      return { error: "Cuộc trò chuyện của đơn này đã đủ 200 tin", id: 0 };
+    m.id = this.next++;
+    this.items.push(m);
+    return { error: "", id: m.id };
+  }
+  of(order) {
+    return this.items.filter((m) => m.order === order);
+  }
+  count(order) {
+    return this.items.reduce((n, m) => n + (m.order === order ? 1 : 0), 0);
+  }
+}
+class PrefStore {
+  constructor() {
+    this.items = [];
+  }
+  loadText(text) {
+    const out = [];
+    let no = 0;
+    for (const raw of meaningfulLines(text)) {
+      ++no;
+      const sp = splitColumns(raw, 3);
+      if (!sp || sp.cols[0] !== "F" && sp.cols[0] !== "B")
+        throw new Error(`So thich khach dong ${no}: sai dinh dang`);
+      out.push({ kind: sp.cols[0], customer: decodeToken(sp.cols[1]), shipper: decodeToken(sp.cols[2]) });
+    }
+    this.items = out;
+  }
+  toText() {
+    let o = "# Shipper yeu thich (F) / bi chan (B) cua tung khach: loai khach ten_shipper\n";
+    for (const p of this.items)
+      o += `${p.kind} ${encodeToken(p.customer)} ${encodeToken(p.shipper)}\n`;
+    return o;
+  }
+  has(kind, customer, shipper) {
+    return this.items.some((p) => p.kind === kind && p.customer === customer && p.shipper === shipper);
+  }
+  isBlocked(customer, shipper) {
+    return this.has("B", customer, shipper);
+  }
+  isFavorite(customer, shipper) {
+    return this.has("F", customer, shipper);
+  }
+  list(kind, customer) {
+    return this.items.filter((p) => p.kind === kind && p.customer === customer).map((p) => p.shipper);
+  }
+  blocked(customer) {
+    return this.list("B", customer);
+  }
+  favorites(customer) {
+    return this.list("F", customer);
+  }
+  apply(customer, shipper, action) {
+    const drop = (kind) => {
+      this.items = this.items.filter((p) => !(p.kind === kind && p.customer === customer && p.shipper === shipper));
+    };
+    const countOf = (kind) => this.list(kind, customer).length;
+    if (action === "block") {
+      if (this.isBlocked(customer, shipper))
+        return "Bạn đã chặn shipper này rồi";
+      if (countOf("B") >= MAX_PREFS)
+        return "Bạn chỉ chặn được tối đa 10 shipper, hãy bỏ chặn bớt";
+      drop("F");
+      this.items.push({ kind: "B", customer, shipper });
+    } else if (action === "unblock") {
+      if (!this.isBlocked(customer, shipper))
+        return "Shipper này không nằm trong danh sách chặn";
+      drop("B");
+    } else if (action === "fav") {
+      if (this.isFavorite(customer, shipper))
+        return "Shipper này đã ở trong danh sách yêu thích";
+      if (countOf("F") >= MAX_PREFS)
+        return "Bạn chỉ có tối đa 10 shipper yêu thích, hãy bỏ bớt";
+      drop("B");
+      this.items.push({ kind: "F", customer, shipper });
+    } else if (action === "unfav") {
+      if (!this.isFavorite(customer, shipper))
+        return "Shipper này không nằm trong danh sách yêu thích";
+      drop("F");
+    } else
+      return "Thao tác không hợp lệ";
+    return "";
+  }
+  renameShipper(oldName, newName) {
+    for (const p of this.items)
+      if (p.shipper === oldName)
+        p.shipper = newName;
+  }
+  removeCustomer(customer) {
+    this.items = this.items.filter((p) => p.customer !== customer);
+  }
 }

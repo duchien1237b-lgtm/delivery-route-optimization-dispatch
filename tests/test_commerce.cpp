@@ -150,8 +150,8 @@ static int testMatrix() {
     CHECK(!roleFromKey("dispatcher", gone) && ROLE_COUNT == 3);
     // Shipper / khách hàng
     CHECK(canAccess(SHIPPER, "POST", "trip/accept") && canAccess(SHIPPER, "POST", "cod/remit") && !canAccess(SHIPPER, "POST", "cod/confirm"));
-    CHECK(canAccess(SHIPPER, "POST", "order/release") && canAccess(SHIPPER, "POST", "order/rate-customer") && canAccess(SHIPPER, "POST", "shipper/location"));
-    CHECK(!canAccess(CUSTOMER, "POST", "order/release") && !canAccess(CUSTOMER, "POST", "order/rate-customer") && !canAccess(CUSTOMER, "POST", "shipper/location"));
+    CHECK(canAccess(SHIPPER, "POST", "order/release") && canAccess(SHIPPER, "POST", "order/claim") && canAccess(SHIPPER, "POST", "shipper/location"));
+    CHECK(!canAccess(CUSTOMER, "POST", "order/release") && !canAccess(CUSTOMER, "POST", "order/claim") && !canAccess(CUSTOMER, "POST", "shipper/location"));
     CHECK(canAccess(CUSTOMER, "POST", "order/retry") && canAccess(ADMIN, "POST", "order/retry") && !canAccess(SHIPPER, "POST", "order/retry"));
     CHECK(!canAccess(SHIPPER, "POST", "dispatch/apply") && !canAccess(CUSTOMER, "POST", "dispatch/assign"));
     CHECK(!canAccess(SHIPPER, "POST", "order/cancel") && !canAccess(SHIPPER, "GET", "users"));
@@ -177,7 +177,13 @@ static int testOrderFlow() {
     CHECK(check(PENDING, "cancel", SYS, &to).empty() && to == CANCELLED);
     CHECK(check(DISPATCHED, "decline", SHP, &to).empty() && to == PENDING);
     CHECK(check(ASSIGNED, "release", SHP, &to).empty() && to == PENDING && !check(ASSIGNED, "release", CUS).empty());
-    CHECK(check(ASSIGNED, "deliver", SHP, &to).empty() && to == DELIVERED);
+    // Nhận đơn tự do (ai bấm trước được), giao tới -> người nhận xác nhận lần hai
+    CHECK(check(PENDING, "claim", SHP, &to).empty() && to == ASSIGNED && !check(PENDING, "claim", CUS).empty());
+    CHECK(check(ASSIGNED, "arrive", SHP, &to).empty() && to == ARRIVED);
+    CHECK(check(ARRIVED, "receive", CUS, &to).empty() && to == DELIVERED && !check(ARRIVED, "receive", SHP).empty());
+    CHECK(check(ARRIVED, "dispute", CUS, &to).empty() && to == ASSIGNED && !check(ARRIVED, "dispute", SHP).empty());
+    CHECK(!check(ASSIGNED, "deliver", SHP).empty() && !check(ASSIGNED, "receive", CUS).empty());
+    CHECK(check(ASSIGNED, "deliver", ADM, &to).empty() && to == DELIVERED);
     CHECK(!check(DISPATCHED, "deliver", SHP).empty());
     CHECK(check(FAILED, "requeue", ADM, &to).empty() && to == PENDING);
     CHECK(check(FAILED, "return", ADM, &to).empty() && to == RETURNED);
@@ -186,7 +192,7 @@ static int testOrderFlow() {
     CHECK(!check(FAILED, "cancel", CUS).empty() && check(FAILED, "cancel", CUS).find("quản trị viên") != string::npos);
     CHECK(check(ASSIGNED, "cancel", ADM).empty());
     // Trạng thái cuối: mọi hành động đều bị từ chối
-    const vector<string> actions = {"confirm", "reject", "cancel", "dispatch", "accept", "decline", "deliver", "fail", "requeue", "return", "unassign", "release", "expire"};
+    const vector<string> actions = {"confirm", "reject", "cancel", "dispatch", "accept", "decline", "deliver", "fail", "requeue", "return", "unassign", "release", "expire", "claim", "arrive", "receive", "dispute"};
     for (int st : {DELIVERED, RETURNED, CANCELLED})
         for (const string& a : actions)
             for (unsigned who : {CUS, SHP, ADM, SYS}) CHECK(!check(st, a, who).empty());

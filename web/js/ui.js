@@ -81,6 +81,7 @@ export const STATUS = [
   { label: 'Hoàn kho', cls: 'warn' },
   { label: 'Mới', cls: 'violet' },
   { label: 'Đã phân công', cls: 'blue' },
+  { label: 'Chờ xác nhận', cls: 'warn' },
 ];
 // Vai trò người đang xem (do app.js đặt): khách không biết đơn đang được mời cho shipper nào, chỉ thấy “đang tìm shipper”
 let viewer = '';
@@ -88,9 +89,11 @@ export function setViewer(role) { viewer = role || ''; }
 // Tên và màu trạng thái của đơn theo người xem
 export function statusLabel(o) {
   if (o.status === 0 && o.noShipper) return { label: 'Chưa có shipper', cls: 'urgent' };
-  if (viewer === 'customer' && (o.status === 0 || o.status === 7)) return o.createdAt > 0 || o.status === 7 ? { label: 'Đang tìm shipper', cls: 'violet searching' } : STATUS[0];
-  if (viewer === 'shipper' && o.status === 7) return { label: 'Lời mời mới', cls: 'violet' };
-  if (viewer === 'admin' && o.status === 7) return { label: 'Đã mời shipper', cls: 'blue' };
+  if (viewer === 'customer' && (o.status === 0 || o.status === 7)) return o.createdAt > 0 || o.status === 7 ? { label: 'Đang chờ shipper nhận', cls: 'violet searching' } : STATUS[0];
+  if (viewer === 'customer' && o.status === 8) return { label: 'Chờ bạn xác nhận', cls: 'warn' };
+  if (viewer === 'shipper' && o.status === 7) return { label: 'Chuyến được giao', cls: 'violet' };
+  if (viewer === 'shipper' && o.status === 8) return { label: 'Chờ người nhận xác nhận', cls: 'warn' };
+  if (viewer === 'admin' && o.status === 7) return { label: 'Đã phân công tay', cls: 'blue' };
   return STATUS[o.status] || STATUS[0];
 }
 export function statusChip(o) {
@@ -107,7 +110,8 @@ export function maxCapacity(state) {
 
 export function toast(message, kind = 'info') {
   const el = document.createElement('div');
-  el.className = `toast ${kind === 'error' ? 'error' : ''}`;
+  el.className = `toast ${kind === 'error' ? 'error' : kind === 'warn' ? 'warn' : ''}`;
+  el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   el.textContent = message;
   $('#toasts').append(el);
   const life = kind === 'error' ? 6000 : 3200;
@@ -118,7 +122,8 @@ export function toast(message, kind = 'info') {
 export function showModal(title, html) {
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = html;
-  $('#modal').showModal();
+  const d = $('#modal');
+  if (!d.open) d.showModal();   // đang mở (vd. từ chi tiết đơn mở tiếp hộp trò chuyện): chỉ thay nội dung
 }
 
 // Chạy một hàm async, báo lỗi bằng toast. Trả về kết quả hoặc undefined.
@@ -142,7 +147,7 @@ export async function guard(fn, button) {
 // Nhóm nút chọn 1 trong nhiều: <div class="seg" data-seg="name">
 export function segmented(name, options, value) {
   return `<div class="seg" role="group" data-seg="${name}">${options
-    .map((o) => `<button type="button" data-value="${o.v}" aria-pressed="${String(o.v) === String(value)}">${icon(o.label)}<span>${o.label}</span></button>`)
+    .map((o) => `<button type="button" data-value="${o.v}" aria-label="${o.label}" title="${o.label}" aria-pressed="${String(o.v) === String(value)}">${icon(o.label)}<span>${o.label}</span></button>`)
     .join('')}</div>`;
 }
 
@@ -273,7 +278,7 @@ export function tripPosition(trip, time, nodesById) {
       if (time < AT[i]) {
         const a = an(i - 1), b = an(i);
         const f = AT[i] > AT[i - 1] ? Math.min(1, Math.max(0, (time - AT[i - 1]) / (AT[i] - AT[i - 1]))) : 1;
-        return { lat: a.x + (b.x - a.x) * f, lon: a.y + (b.y - a.y) * f, index: -1, state: 'approach' };
+        return { lat: a.x + (b.x - a.x) * f, lon: a.y + (b.y - a.y) * f, index: -1, state: 'approach', along: { nodes: A, i: i - 1, f, vehicle: trip.vehicleName } };
       }
     }
   }
@@ -282,7 +287,7 @@ export function tripPosition(trip, time, nodesById) {
     if (time < T[i]) {
       const a = at(i - 1), b = at(i), d0 = depart(i - 1);
       const f = T[i] > d0 ? Math.min(1, Math.max(0, (time - d0) / (T[i] - d0))) : 1;
-      return { lat: a.x + (b.x - a.x) * f, lon: a.y + (b.y - a.y) * f, index: i - 1, state: 'drive' };
+      return { lat: a.x + (b.x - a.x) * f, lon: a.y + (b.y - a.y) * f, index: i - 1, state: 'drive', along: { nodes: P, i: i - 1, f, vehicle: trip.vehicleName } };
     }
     if (time < depart(i)) return { lat: at(i).x, lon: at(i).y, index: i, state: 'serve' };
   }
@@ -511,7 +516,7 @@ export const validate = {
   email(e) {
     return /^[A-Za-z0-9_%+-]+(\.[A-Za-z0-9_%+-]+)*@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/.test(e) && e.length <= 80 ? '' : 'Email không hợp lệ';
   },
-  phone(p) { return /^0[0-9]{9}$/.test(p) ? '' : 'Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0'; },
+  phone(p) { return /^0[0-9]{9,10}$/.test(p) ? '' : 'Số điện thoại phải bắt đầu bằng số 0 và gồm 10–11 chữ số'; },
   plate(p) {
     if (p.length < 4 || p.length > 12) return 'Biển số xe dài 4–12 ký tự (ví dụ 59A1-123.45)';
     return /^[A-Z0-9.-]+$/.test(p) ? '' : "Biển số xe chỉ gồm chữ in hoa, số, '-' và '.'";
@@ -556,6 +561,7 @@ export const EVENT_LABEL = {
   created: 'Đặt đơn', confirmed: 'Đã xác nhận', rejected: 'Bị từ chối', assigned: 'Đã phân công shipper', accepted: 'Shipper nhận chuyến',
   declined: 'Shipper từ chối chuyến', delivered: 'Giao thành công', failed: 'Giao thất bại', returned: 'Hoàn hàng về kho',
   cancelled: 'Đã huỷ', requeue: 'Đưa lại hàng chờ', recalled: 'Quản trị viên thu hồi lời mời', reroute: 'Đổi tuyến', absent: 'Shipper nghỉ đột xuất', apply: 'Áp dụng phương án',
+  claimed: 'Shipper nhận đơn', arrived: 'Shipper báo đã giao tới', received: 'Người nhận xác nhận đã nhận hàng', auto_received: 'Tự xác nhận (người nhận không phản hồi)', disputed: 'Người nhận báo chưa nhận được hàng',
   offered: 'Gửi lời mời cho shipper gần nhất', expired: 'Shipper bỏ lỡ lời mời', offer_withdrawn: 'Rút lời mời (shipper tạm nghỉ)', released: 'Shipper nhả đơn',
   retry: 'Tìm lại shipper', no_shipper: 'Chưa có shipper nhận đơn', gave_up: 'Hệ thống tự huỷ (không có shipper)', reason: 'Lý do huỷ', available: 'Shipper có mặt trở lại',
 };
